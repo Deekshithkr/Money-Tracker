@@ -34,4 +34,7 @@ interface RecurringDao {
 
     @Delete
     suspend fun delete(item: RecurringItemEntity)
+
+    @Query("DELETE FROM recurring_items")
+    suspend fun deleteAll()
 }

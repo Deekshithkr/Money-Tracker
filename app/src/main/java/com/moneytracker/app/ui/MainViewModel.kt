@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.moneytracker.app.data.CategorySpend
 import com.moneytracker.app.data.MoneyTrackerRepository
 import com.moneytracker.app.data.PaymentMethodSpend
+import com.moneytracker.app.model.BorrowedItemEntity
 import com.moneytracker.app.model.Category
 import com.moneytracker.app.model.CreditCardEntity
 import com.moneytracker.app.model.PaymentMethod
@@ -35,15 +36,21 @@ data class DashboardUiState(
     val nonLoanRecurring: List<RecurringItemEntity> = emptyList(),
     val categoryBreakdown: List<CategorySpend> = emptyList(),
     val paymentBreakdown: List<PaymentMethodSpend> = emptyList(),
-    val trendData: List<MonthTrendData> = emptyList()
+    val trendData: List<MonthTrendData> = emptyList(),
+    val borrowedItems: List<BorrowedItemEntity> = emptyList(),
+    val totalBorrowedPending: Double = 0.0
 )
 
-private data class DashboardBaseData(
+private data class CoreData(
     val recents: List<TransactionEntity>,
     val cards: List<CreditCardEntity>,
-    val recurring: List<RecurringItemEntity>,
+    val recurring: List<RecurringItemEntity>
+)
+
+private data class ExtraData(
     val loans: List<RecurringItemEntity>,
-    val nonLoans: List<RecurringItemEntity>
+    val allTx: List<TransactionEntity>,
+    val borrowed: List<BorrowedItemEntity>
 )
 
 class MainViewModel(
@@ -74,63 +81,75 @@ class MainViewModel(
     val nonLoanRecurring: StateFlow<List<RecurringItemEntity>> = repository.nonLoanRecurringItems
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Combined Dashboard state
+    val allBorrowedItems: StateFlow<List<BorrowedItemEntity>> = repository.allBorrowedItems
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Combined Dashboard state with pure dynamic calculation
     val dashboardState: StateFlow<DashboardUiState> = combine(
         combine(
             repository.recentTransactions,
             repository.allCreditCards,
-            repository.activeRecurringItems,
+            repository.activeRecurringItems
+        ) { recents, cards, recurring ->
+            CoreData(recents, cards, recurring)
+        },
+        combine(
             repository.activeLoans,
-            repository.nonLoanRecurringItems
-        ) { recents, cards, recurring, loans, nonLoans ->
-            DashboardBaseData(recents, cards, recurring, loans, nonLoans)
+            repository.allTransactions,
+            repository.allBorrowedItems
+        ) { loans, allTx, borrowed ->
+            ExtraData(loans, allTx, borrowed)
         },
         repository.getCategorySpending(currentMonthRange.first, currentMonthRange.second),
         repository.getPaymentMethodBreakdown(currentMonthRange.first, currentMonthRange.second)
-    ) { base, categories, paymentMethods ->
-        val recents = base.recents
-        val cards = base.cards
-        val recurring = base.recurring
-        val loans = base.loans
-        val nonLoans = base.nonLoans
+    ) { core, extra, categories, paymentMethods ->
+        val recents = core.recents
+        val cards = core.cards
+        val recurring = core.recurring
+        val loans = extra.loans
+        val allTx = extra.allTx
+        val borrowedItems = extra.borrowed
 
-        // Calculate spends from all transactions
         val (start, end) = currentMonthRange
+
+        // Real calculations from user transactions
+        val totalIncomeAll = allTx.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
+        val totalExpenseAll = allTx.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        val totalBalance = totalIncomeAll - totalExpenseAll
+
         val monthlyExpense = categories.sumOf { it.totalAmount }
+        val monthlyIncome = allTx.filter { it.type == TransactionType.INCOME && it.dateMillis in start..end }.sumOf { it.amount }
         val monthlyCCSpend = paymentMethods.find { it.paymentMethod == PaymentMethod.CREDIT_CARD }?.totalAmount ?: 0.0
 
-        // Mock 4-month trend for beautiful visualizations
-        val trends = listOf(
-            MonthTrendData("Aug", 135000.0, 78400.0),
-            MonthTrendData("Sep", 140000.0, 89200.0),
-            MonthTrendData("Oct", 145000.0, 94600.0),
-            MonthTrendData("Nov", 177000.0, (if (monthlyExpense > 0) monthlyExpense else 82498.0))
-        )
-
-        // Estimated card spends
+        // Estimated card spends from actual transactions
         val cardSpends = mutableMapOf<Long, Double>()
         cards.forEach { card ->
-            cardSpends[card.id] = when (card.last4Digits) {
-                "4892" -> 38240.0
-                "7154" -> 24190.0
-                else -> 8900.0
-            }
+            cardSpends[card.id] = allTx
+                .filter { it.creditCardId == card.id && it.type == TransactionType.EXPENSE }
+                .sumOf { it.amount }
         }
 
+        // Real dynamic 4-month trend
+        val trends = calculateTrends(allTx)
+
+        val totalPending = borrowedItems.filter { !it.isSettled }.sumOf { it.remainingAmount }
+
         DashboardUiState(
-            totalBalance = 168450.0,
-            monthlyIncome = 177000.0,
-            monthlyExpense = if (monthlyExpense > 0) monthlyExpense else 82498.0,
-            monthlyCreditCardSpend = if (monthlyCCSpend > 0) monthlyCCSpend else 71330.0,
+            totalBalance = totalBalance,
+            monthlyIncome = monthlyIncome,
+            monthlyExpense = monthlyExpense,
+            monthlyCreditCardSpend = monthlyCCSpend,
             recentTransactions = recents,
             creditCards = cards,
             cardSpendMap = cardSpends,
             upcomingRecurring = recurring,
             activeLoans = loans,
-            nonLoanRecurring = nonLoans,
+            nonLoanRecurring = emptyList(),
             categoryBreakdown = categories,
             paymentBreakdown = paymentMethods,
-            trendData = trends
+            trendData = trends,
+            borrowedItems = borrowedItems,
+            totalBorrowedPending = totalPending
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardUiState())
 
@@ -141,7 +160,8 @@ class MainViewModel(
         category: Category,
         paymentMethod: PaymentMethod,
         creditCardId: Long? = null,
-        note: String = ""
+        note: String = "",
+        dateMillis: Long = System.currentTimeMillis()
     ) {
         viewModelScope.launch {
             repository.addTransaction(
@@ -152,7 +172,7 @@ class MainViewModel(
                     category = category,
                     paymentMethod = paymentMethod,
                     creditCardId = creditCardId,
-                    dateMillis = System.currentTimeMillis(),
+                    dateMillis = dateMillis,
                     note = note
                 )
             )
@@ -162,6 +182,48 @@ class MainViewModel(
     fun deleteTransaction(transaction: TransactionEntity) {
         viewModelScope.launch {
             repository.deleteTransaction(transaction)
+        }
+    }
+
+    fun addBorrowedItem(
+        personName: String,
+        totalAmount: Double,
+        receiveMethod: String = "UPI",
+        dueDateMillis: Long = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
+        isSplit: Boolean = false,
+        splitCount: Int = 1,
+        splitDetails: String = "",
+        notes: String = ""
+    ) {
+        viewModelScope.launch {
+            repository.addBorrowedItem(
+                BorrowedItemEntity(
+                    personName = personName,
+                    totalAmount = totalAmount,
+                    receiveMethod = receiveMethod,
+                    dueDateMillis = dueDateMillis,
+                    isSplit = isSplit,
+                    splitCount = splitCount,
+                    splitDetails = splitDetails,
+                    notes = notes
+                )
+            )
+        }
+    }
+
+    fun recordBorrowedRepayment(
+        item: BorrowedItemEntity,
+        amountReceived: Double,
+        paymentMethod: PaymentMethod = PaymentMethod.UPI
+    ) {
+        viewModelScope.launch {
+            repository.recordBorrowedRepayment(item, amountReceived, paymentMethod)
+        }
+    }
+
+    fun deleteBorrowedItem(item: BorrowedItemEntity) {
+        viewModelScope.launch {
+            repository.deleteBorrowedItem(item)
         }
     }
 
@@ -193,6 +255,38 @@ class MainViewModel(
         viewModelScope.launch {
             repository.deleteRecurringItem(item)
         }
+    }
+
+    fun clearAllData() {
+        viewModelScope.launch {
+            repository.clearAllData()
+        }
+    }
+
+    private fun calculateTrends(allTx: List<TransactionEntity>): List<MonthTrendData> {
+        val monthNames = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+        val list = mutableListOf<MonthTrendData>()
+        for (i in 3 downTo 0) {
+            val c = Calendar.getInstance()
+            c.add(Calendar.MONTH, -i)
+            val monthIdx = c.get(Calendar.MONTH)
+            c.set(Calendar.DAY_OF_MONTH, 1)
+            c.set(Calendar.HOUR_OF_DAY, 0)
+            c.set(Calendar.MINUTE, 0)
+            c.set(Calendar.SECOND, 0)
+            val mStart = c.timeInMillis
+
+            c.set(Calendar.DAY_OF_MONTH, c.getActualMaximum(Calendar.DAY_OF_MONTH))
+            c.set(Calendar.HOUR_OF_DAY, 23)
+            c.set(Calendar.MINUTE, 59)
+            c.set(Calendar.SECOND, 59)
+            val mEnd = c.timeInMillis
+
+            val inc = allTx.filter { it.type == TransactionType.INCOME && it.dateMillis in mStart..mEnd }.sumOf { it.amount }
+            val exp = allTx.filter { it.type == TransactionType.EXPENSE && it.dateMillis in mStart..mEnd }.sumOf { it.amount }
+            list.add(MonthTrendData(monthNames[monthIdx], inc, exp))
+        }
+        return list
     }
 
     private fun getMonthTimeRange(monthsOffset: Int): Pair<Long, Long> {

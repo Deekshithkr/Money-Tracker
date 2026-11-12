@@ -12,14 +12,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetState
@@ -27,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,6 +52,9 @@ import com.moneytracker.app.ui.theme.IncomeGreen
 import com.moneytracker.app.ui.theme.PrimaryNeon
 import com.moneytracker.app.ui.theme.SurfaceDark
 import com.moneytracker.app.ui.theme.SurfaceElevated
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,7 +71,8 @@ fun AddTransactionSheet(
         category: Category,
         paymentMethod: PaymentMethod,
         creditCardId: Long?,
-        note: String
+        note: String,
+        dateMillis: Long
     ) -> Unit
 ) {
     var type by remember { mutableStateOf(defaultType) }
@@ -75,6 +84,18 @@ fun AddTransactionSheet(
     var selectedPaymentMethod by remember { mutableStateOf(PaymentMethod.UPI) }
     var selectedCreditCardId by remember { mutableStateOf(creditCards.firstOrNull()?.id) }
     var note by remember { mutableStateOf("") }
+    var daysOffset by remember { mutableIntStateOf(0) }
+    var showError by remember { mutableStateOf(false) }
+
+    val parsedAmt = amount.toDoubleOrNull() ?: 0.0
+
+    val dateOptions = listOf(
+        0 to "Today",
+        1 to "Yesterday",
+        2 to "2 Days Ago",
+        3 to "3 Days Ago",
+        7 to "1 Week Ago"
+    )
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -93,7 +114,7 @@ fun AddTransactionSheet(
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Transaction Type Toggle (Expense / Income)
             Row(
@@ -145,14 +166,51 @@ fun AddTransactionSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Amount Input
+            // Amount Input (Mandatory *)
             OutlinedTextField(
                 value = amount,
-                onValueChange = { amount = it },
-                label = { Text("Amount ($currencySymbol)") },
+                onValueChange = {
+                    amount = it
+                    if (showError) showError = false
+                },
+                label = {
+                    Row {
+                        Text("Amount ($currencySymbol)")
+                        Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                    }
+                },
                 placeholder = { Text("0.00") },
+                isError = showError && parsedAmt <= 0,
+                supportingText = if (showError && parsedAmt <= 0) {
+                    { Text("Amount must be greater than 0", color = ExpenseRed) }
+                } else null,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Title / Merchant (Mandatory *)
+            OutlinedTextField(
+                value = title,
+                onValueChange = {
+                    title = it
+                    if (showError) showError = false
+                },
+                label = {
+                    Row {
+                        Text("Title / Merchant (e.g. Starbucks, Rent)")
+                        Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                    }
+                },
+                placeholder = { Text("Enter title") },
+                isError = showError && title.isBlank(),
+                supportingText = if (showError && title.isBlank()) {
+                    { Text("Title is required", color = ExpenseRed) }
+                } else null,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 singleLine = true
@@ -160,25 +218,54 @@ fun AddTransactionSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Title / Merchant
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                label = { Text("Title / Merchant (e.g. Starbucks, Amazon, Rent)") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                singleLine = true
-            )
+            // Date Picker / Selector (Choose date while adding expense)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.CalendarToday,
+                    contentDescription = null,
+                    tint = Color(0xFF94A3B8),
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Transaction Date",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+            Spacer(modifier = Modifier.height(6.dp))
 
-            Spacer(modifier = Modifier.height(14.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(dateOptions) { (days, label) ->
+                    val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -days) }
+                    val dateFormatted = SimpleDateFormat("dd MMM", Locale.getDefault()).format(cal.time)
+                    val fullLabel = if (days == 0) "$label ($dateFormatted)" else "$label ($dateFormatted)"
+                    FilterChip(
+                        selected = daysOffset == days,
+                        onClick = { daysOffset = days },
+                        label = { Text(fullLabel) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PrimaryNeon.copy(alpha = 0.4f),
+                            selectedLabelColor = Color.White
+                        )
+                    )
+                }
+            }
 
-            // Category Picker
-            Text(
-                text = "Select Category",
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Category Picker (Mandatory *)
+            Row {
+                Text(
+                    text = "Category",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
             Spacer(modifier = Modifier.height(6.dp))
 
             val availableCategories = Category.values().filter {
@@ -192,22 +279,25 @@ fun AddTransactionSheet(
                         onClick = { selectedCategory = cat },
                         label = { Text("${cat.emoji} ${cat.displayName}") },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(cat.colorHex).copy(alpha = 0.3f),
+                            selectedContainerColor = Color(cat.colorHex).copy(alpha = 0.35f),
                             selectedLabelColor = Color.White
                         )
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Payment Method Selector
-            Text(
-                text = "Payment Method",
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            // Payment Method Selector (Mandatory *)
+            Row {
+                Text(
+                    text = "Payment Method",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
             Spacer(modifier = Modifier.height(6.dp))
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -226,7 +316,7 @@ fun AddTransactionSheet(
 
             // If Credit Card is selected: Choose specific credit card
             if (selectedPaymentMethod == PaymentMethod.CREDIT_CARD && creditCards.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     text = "Select Credit Card",
                     color = Color(0xFFA5B4FC),
@@ -250,7 +340,7 @@ fun AddTransactionSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Optional Note
             OutlinedTextField(
@@ -262,23 +352,28 @@ fun AddTransactionSheet(
                 singleLine = true
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Save Button
             Button(
                 onClick = {
-                    val parsedAmt = amount.toDoubleOrNull() ?: 0.0
                     if (title.isNotBlank() && parsedAmt > 0) {
+                        val cal = Calendar.getInstance().apply {
+                            add(Calendar.DAY_OF_YEAR, -daysOffset)
+                        }
                         onSave(
-                            title,
+                            title.trim(),
                             parsedAmt,
                             type,
                             selectedCategory,
                             selectedPaymentMethod,
                             if (selectedPaymentMethod == PaymentMethod.CREDIT_CARD) selectedCreditCardId else null,
-                            note
+                            note.trim(),
+                            cal.timeInMillis
                         )
                         onDismiss()
+                    } else {
+                        showError = true
                     }
                 },
                 modifier = Modifier

@@ -220,21 +220,51 @@ fun RecurringScreen(
             Spacer(modifier = Modifier.height(14.dp))
         }
 
-        // List of Recurring Items
-        items(filteredItems) { item ->
-            if (item.isLoan) {
-                LoanProgressCard(
-                    loan = item,
-                    currencySymbol = currencySymbol,
-                    onPayEmiClick = { onRecordLoanPayment(it) },
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-                )
-            } else {
-                RecurringGeneralRow(
-                    item = item,
-                    currencySymbol = currencySymbol,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-                )
+        if (filteredItems.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 20.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(SurfaceElevated)
+                        .border(1.dp, BorderDark, RoundedCornerShape(16.dp))
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "No recurring items found",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap '+ Add Item' above to track your recurring expenses, bills, or loans.",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+        } else {
+            items(filteredItems) { item ->
+                if (item.isLoan) {
+                    LoanProgressCard(
+                        loan = item,
+                        currencySymbol = currencySymbol,
+                        onPayEmiClick = { onRecordLoanPayment(it) },
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                    )
+                } else {
+                    RecurringGeneralRow(
+                        item = item,
+                        currencySymbol = currencySymbol,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
     }
@@ -246,6 +276,7 @@ fun RecurringScreen(
         var dueDay by remember { mutableStateOf("1") }
         var isLoan by remember { mutableStateOf(false) }
         var totalMonths by remember { mutableStateOf("36") }
+        var formError by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
@@ -255,20 +286,40 @@ fun RecurringScreen(
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
-                        label = { Text("Title (e.g. Salary, Home Loan, Netflix)") },
-                        modifier = Modifier.fillMaxWidth()
+                        label = {
+                            Row {
+                                Text("Title (e.g. Netflix, Car EMI)")
+                                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        isError = formError && title.isBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
                     )
                     OutlinedTextField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text("Amount ($currencySymbol)") },
-                        modifier = Modifier.fillMaxWidth()
+                        label = {
+                            Row {
+                                Text("Amount ($currencySymbol)")
+                                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        isError = formError && (amount.toDoubleOrNull() ?: 0.0) <= 0,
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
                     )
                     OutlinedTextField(
                         value = dueDay,
                         onValueChange = { dueDay = it },
-                        label = { Text("Day of Month (1 - 31)") },
-                        modifier = Modifier.fillMaxWidth()
+                        label = {
+                            Row {
+                                Text("Day of Month (1 - 31)")
+                                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
                     )
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -288,8 +339,14 @@ fun RecurringScreen(
                         OutlinedTextField(
                             value = totalMonths,
                             onValueChange = { totalMonths = it },
-                            label = { Text("Total Tenure (Months)") },
-                            modifier = Modifier.fillMaxWidth()
+                            label = {
+                                Row {
+                                    Text("Total Tenure (Months)")
+                                    Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
                         )
                     }
                 }
@@ -304,7 +361,7 @@ fun RecurringScreen(
                         if (title.isNotBlank() && parsedAmount > 0) {
                             onAddRecurringItem(
                                 RecurringItemEntity(
-                                    title = title,
+                                    title = title.trim(),
                                     amount = parsedAmount,
                                     recurringType = if (isLoan) RecurringType.PERSONAL_LOAN_EMI else RecurringType.SUBSCRIPTION,
                                     frequency = RecurringFrequency.MONTHLY,
@@ -315,8 +372,10 @@ fun RecurringScreen(
                                     originalLoanAmount = if (isLoan) (parsedAmount * parsedMonths) else 0.0
                                 )
                             )
+                            showAddDialog = false
+                        } else {
+                            formError = true
                         }
-                        showAddDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeon)
                 ) {

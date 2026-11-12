@@ -10,11 +10,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PieChart
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moneytracker.app.model.TransactionType
+import com.moneytracker.app.ui.screens.AddBorrowedSheet
 import com.moneytracker.app.ui.screens.AddTransactionSheet
 import com.moneytracker.app.ui.screens.AnalyticsScreen
 import com.moneytracker.app.ui.screens.CreditCardScreen
@@ -46,14 +47,13 @@ import com.moneytracker.app.ui.screens.TransactionsScreen
 import com.moneytracker.app.ui.theme.BgDark
 import com.moneytracker.app.ui.theme.PrimaryNeon
 import com.moneytracker.app.ui.theme.SurfaceDark
-import com.moneytracker.app.ui.theme.SurfaceElevated
 
 sealed class Screen(val title: String, val icon: ImageVector, val index: Int) {
     object Dashboard : Screen("Overview", Icons.Default.Home, 0)
     object Analytics : Screen("Analytics", Icons.Default.PieChart, 1)
     object CreditCards : Screen("Cards", Icons.Default.CreditCard, 2)
     object Recurring : Screen("Recurring", Icons.Default.Sync, 3)
-    object History : Screen("History", Icons.Default.ReceiptLong, 4)
+    object History : Screen("History", Icons.AutoMirrored.Filled.ReceiptLong, 4)
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -65,6 +65,7 @@ fun MainScreen(viewModel: MainViewModel) {
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var showAddSheet by remember { mutableStateOf(false) }
+    var showAddBorrowedSheet by remember { mutableStateOf(false) }
     var defaultSheetType by remember { mutableStateOf(TransactionType.EXPENSE) }
 
     val screens = listOf(
@@ -152,6 +153,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         onQuickAddIncome = {
                             defaultSheetType = TransactionType.INCOME
                             showAddSheet = true
+                        },
+                        onAddBorrowed = {
+                            showAddBorrowedSheet = true
+                        },
+                        onReceiveRepayment = { item, amt ->
+                            viewModel.recordBorrowedRepayment(item, amt)
                         }
                     )
                     1 -> AnalyticsScreen(
@@ -196,7 +203,7 @@ fun MainScreen(viewModel: MainViewModel) {
             currencySymbol = currencySymbol,
             defaultType = defaultSheetType,
             onDismiss = { showAddSheet = false },
-            onSave = { title, amount, type, category, paymentMethod, cardId, note ->
+            onSave = { title, amount, type, category, paymentMethod, cardId, note, dateMillis ->
                 viewModel.addTransaction(
                     title = title,
                     amount = amount,
@@ -204,7 +211,27 @@ fun MainScreen(viewModel: MainViewModel) {
                     category = category,
                     paymentMethod = paymentMethod,
                     creditCardId = cardId,
-                    note = note
+                    note = note,
+                    dateMillis = dateMillis
+                )
+            }
+        )
+    }
+
+    if (showAddBorrowedSheet) {
+        AddBorrowedSheet(
+            currencySymbol = currencySymbol,
+            onDismiss = { showAddBorrowedSheet = false },
+            onSave = { name, amt, method, due, isSplit, splitCount, details, notes ->
+                viewModel.addBorrowedItem(
+                    personName = name,
+                    totalAmount = amt,
+                    receiveMethod = method,
+                    dueDateMillis = due,
+                    isSplit = isSplit,
+                    splitCount = splitCount,
+                    splitDetails = details,
+                    notes = notes
                 )
             }
         )

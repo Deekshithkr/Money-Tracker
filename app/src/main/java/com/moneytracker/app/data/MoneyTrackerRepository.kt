@@ -1,5 +1,6 @@
 package com.moneytracker.app.data
 
+import com.moneytracker.app.model.BorrowedItemEntity
 import com.moneytracker.app.model.Category
 import com.moneytracker.app.model.CreditCardEntity
 import com.moneytracker.app.model.PaymentMethod
@@ -7,12 +8,12 @@ import com.moneytracker.app.model.RecurringItemEntity
 import com.moneytracker.app.model.TransactionEntity
 import com.moneytracker.app.model.TransactionType
 import kotlinx.coroutines.flow.Flow
-import java.util.Calendar
 
 class MoneyTrackerRepository(
     private val transactionDao: TransactionDao,
     private val creditCardDao: CreditCardDao,
-    private val recurringDao: RecurringDao
+    private val recurringDao: RecurringDao,
+    private val borrowedDao: BorrowedDao
 ) {
     val allTransactions: Flow<List<TransactionEntity>> = transactionDao.getAllTransactions()
     val recentTransactions: Flow<List<TransactionEntity>> = transactionDao.getRecentTransactions(15)
@@ -20,6 +21,8 @@ class MoneyTrackerRepository(
     val activeRecurringItems: Flow<List<RecurringItemEntity>> = recurringDao.getActiveRecurringItems()
     val activeLoans: Flow<List<RecurringItemEntity>> = recurringDao.getActiveLoans()
     val nonLoanRecurringItems: Flow<List<RecurringItemEntity>> = recurringDao.getNonLoanRecurringItems()
+    val allBorrowedItems: Flow<List<BorrowedItemEntity>> = borrowedDao.getAllBorrowedItems()
+    val activeBorrowedItems: Flow<List<BorrowedItemEntity>> = borrowedDao.getActiveBorrowedItems()
 
     fun getCategorySpending(startTime: Long, endTime: Long): Flow<List<CategorySpend>> =
         transactionDao.getCategorySpending(startTime, endTime)
@@ -60,6 +63,44 @@ class MoneyTrackerRepository(
     suspend fun deleteRecurringItem(item: RecurringItemEntity) =
         recurringDao.delete(item)
 
+    suspend fun addBorrowedItem(item: BorrowedItemEntity): Long =
+        borrowedDao.insert(item)
+
+    suspend fun updateBorrowedItem(item: BorrowedItemEntity) =
+        borrowedDao.update(item)
+
+    suspend fun deleteBorrowedItem(item: BorrowedItemEntity) =
+        borrowedDao.delete(item)
+
+    suspend fun recordBorrowedRepayment(
+        item: BorrowedItemEntity,
+        amountReceived: Double,
+        paymentMethod: PaymentMethod = PaymentMethod.UPI
+    ) {
+        val newReceived = item.amountReceived + amountReceived
+        val isSettled = newReceived >= item.totalAmount
+        borrowedDao.update(
+            item.copy(
+                amountReceived = newReceived,
+                isSettled = isSettled
+            )
+        )
+
+        // Automatically log an Income transaction for this repayment
+        val now = System.currentTimeMillis()
+        transactionDao.insert(
+            TransactionEntity(
+                title = "Repayment from ${item.personName}",
+                amount = amountReceived,
+                type = TransactionType.INCOME,
+                category = Category.CASHBACK,
+                paymentMethod = paymentMethod,
+                dateMillis = now,
+                note = "Received repayment (${item.receiveMethod})"
+            )
+        )
+    }
+
     suspend fun recordLoanPayment(loanItem: RecurringItemEntity) {
         val updatedPaidMonths = loanItem.paidTenureMonths + 1
         val isFinished = updatedPaidMonths >= loanItem.totalTenureMonths
@@ -92,7 +133,6 @@ class MoneyTrackerRepository(
 
     suspend fun settleCreditCardBill(card: CreditCardEntity, paymentAmount: Double) {
         val now = System.currentTimeMillis()
-        // Record as an expense/transfer settlement
         transactionDao.insert(
             TransactionEntity(
                 title = "Credit Card Bill Payment (${card.cardName})",
@@ -105,5 +145,12 @@ class MoneyTrackerRepository(
                 note = "Statement settlement for ending in ${card.last4Digits}"
             )
         )
+    }
+
+    suspend fun clearAllData() {
+        transactionDao.deleteAll()
+        creditCardDao.deleteAll()
+        recurringDao.deleteAll()
+        borrowedDao.deleteAll()
     }
 }

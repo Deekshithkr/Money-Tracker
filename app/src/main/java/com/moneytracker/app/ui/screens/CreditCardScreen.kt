@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,7 +25,6 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -32,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moneytracker.app.model.CreditCardEntity
@@ -47,6 +50,7 @@ import com.moneytracker.app.model.PaymentMethod
 import com.moneytracker.app.ui.DashboardUiState
 import com.moneytracker.app.ui.components.CreditCardVisual
 import com.moneytracker.app.ui.theme.BorderDark
+import com.moneytracker.app.ui.theme.ExpenseRed
 import com.moneytracker.app.ui.theme.IncomeGreen
 import com.moneytracker.app.ui.theme.PrimaryNeon
 import com.moneytracker.app.ui.theme.SurfaceDark
@@ -66,6 +70,7 @@ fun CreditCardScreen(
     var selectedFilterCardId by remember { mutableStateOf<Long?>(null) }
     var settlingCard by remember { mutableStateOf<CreditCardEntity?>(null) }
     var settleAmountInput by remember { mutableStateOf("") }
+    var showAddCardDialog by remember { mutableStateOf(false) }
 
     val totalCcSpend = state.monthlyCreditCardSpend
     val totalLimit = state.creditCards.sumOf { it.creditLimit }.let { if (it <= 0) 1.0 else it }
@@ -105,10 +110,20 @@ fun CreditCardScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
+
+                Button(
+                    onClick = { showAddCardDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeon),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Add Card", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
 
-        // Aggregate Summary Card (Directly answers Requirement #4)
+        // Aggregate Summary Card
         item {
             Box(
                 modifier = Modifier
@@ -133,6 +148,7 @@ fun CreditCardScreen(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp
                             )
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = "$currencySymbol${formatter.format(totalCcSpend.toLong())}",
                                 color = Color.White,
@@ -141,14 +157,12 @@ fun CreditCardScreen(
                             )
                         }
 
-                        // Utilization Status Tag
-                        val isSafe = overallUtilization < 30
+                        // Utilization Badge
+                        val isSafe = overallUtilization <= 30
                         Box(
                             modifier = Modifier
-                                .background(
-                                    (if (isSafe) IncomeGreen else WarningAmber).copy(alpha = 0.15f),
-                                    RoundedCornerShape(10.dp)
-                                )
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSafe) IncomeGreen.copy(alpha = 0.15f) else WarningAmber.copy(alpha = 0.15f))
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Row(
@@ -183,7 +197,7 @@ fun CreditCardScreen(
                             fontSize = 12.sp
                         )
                         Text(
-                            text = "Available: $currencySymbol${formatter.format((totalLimit - totalCcSpend).toLong())}",
+                            text = "Available: $currencySymbol${formatter.format((totalLimit - totalCcSpend).coerceAtLeast(0.0).toLong())}",
                             color = IncomeGreen,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
@@ -213,33 +227,64 @@ fun CreditCardScreen(
             Spacer(modifier = Modifier.height(12.dp))
         }
 
-        // Realistic Cards List
-        items(state.creditCards) { card ->
-            val cardSpend = state.cardSpendMap[card.id] ?: 0.0
-            CreditCardVisual(
-                card = card,
-                currentSpend = cardSpend,
-                currencySymbol = currencySymbol,
-                onPayClick = {
-                    settlingCard = it
-                    settleAmountInput = cardSpend.toInt().toString()
-                },
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-            )
+        if (state.creditCards.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(SurfaceElevated)
+                        .border(1.dp, BorderDark, RoundedCornerShape(16.dp))
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "No credit cards added yet",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tap '+ Add Card' to add your credit cards and track limits, billing cycles, and dues.",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        } else {
+            items(state.creditCards) { card ->
+                val cardSpend = state.cardSpendMap[card.id] ?: 0.0
+                CreditCardVisual(
+                    card = card,
+                    currentSpend = cardSpend,
+                    onPayClick = {
+                        settlingCard = card
+                        settleAmountInput = cardSpend.toString()
+                    },
+                    currencySymbol = currencySymbol,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+            }
         }
 
-        // Filter Bar by Card for transactions
+        // Section Title: Card Spends Breakdown
         item {
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             Text(
-                text = "Credit Card Transactions",
+                text = "Filter Transactions by Card",
                 color = Color.White,
-                fontSize = 16.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 20.dp)
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
+            // Card Filter Chips
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -260,7 +305,7 @@ fun CreditCardScreen(
                     FilterChip(
                         selected = selectedFilterCardId == card.id,
                         onClick = { selectedFilterCardId = card.id },
-                        label = { Text(card.cardName) },
+                        label = { Text("••${card.last4Digits}") },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = PrimaryNeon,
                             selectedLabelColor = Color.White
@@ -268,10 +313,10 @@ fun CreditCardScreen(
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
         }
 
+        // Transactions list for selected credit card
         if (ccTransactions.isEmpty()) {
             item {
                 Box(
@@ -292,6 +337,160 @@ fun CreditCardScreen(
                 )
             }
         }
+    }
+
+    // Add Credit Card Dialog (Mandatory fields marked with *)
+    if (showAddCardDialog) {
+        var cardName by remember { mutableStateOf("") }
+        var bankName by remember { mutableStateOf("") }
+        var last4Digits by remember { mutableStateOf("") }
+        var creditLimit by remember { mutableStateOf("") }
+        var billingDay by remember { mutableStateOf("15") }
+        var dueDay by remember { mutableStateOf("5") }
+        var selectedNetwork by remember { mutableStateOf("VISA") }
+        var formError by remember { mutableStateOf(false) }
+
+        val networks = listOf("VISA", "MASTERCARD", "RUPAY", "AMEX")
+
+        AlertDialog(
+            onDismissRequest = { showAddCardDialog = false },
+            title = { Text("Add Credit Card") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = cardName,
+                        onValueChange = { cardName = it },
+                        label = {
+                            Row {
+                                Text("Card Name")
+                                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        placeholder = { Text("e.g. Regalia Gold, Amazon Pay") },
+                        isError = formError && cardName.isBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = bankName,
+                        onValueChange = { bankName = it },
+                        label = {
+                            Row {
+                                Text("Bank Name")
+                                Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        placeholder = { Text("e.g. HDFC Bank, ICICI Bank") },
+                        isError = formError && bankName.isBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = last4Digits,
+                            onValueChange = { if (it.length <= 4) last4Digits = it },
+                            label = {
+                                Row {
+                                    Text("Last 4")
+                                    Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            placeholder = { Text("4892") },
+                            isError = formError && last4Digits.length < 4,
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = creditLimit,
+                            onValueChange = { creditLimit = it },
+                            label = {
+                                Row {
+                                    Text("Limit")
+                                    Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            placeholder = { Text("200000") },
+                            isError = formError && (creditLimit.toDoubleOrNull() ?: 0.0) <= 0,
+                            modifier = Modifier.weight(1.5f),
+                            singleLine = true
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = billingDay,
+                            onValueChange = { billingDay = it },
+                            label = {
+                                Row {
+                                    Text("Billing Day")
+                                    Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = dueDay,
+                            onValueChange = { dueDay = it },
+                            label = {
+                                Row {
+                                    Text("Due Day")
+                                    Text(" *", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Card Network", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(networks) { net ->
+                            FilterChip(
+                                selected = selectedNetwork == net,
+                                onClick = { selectedNetwork = net },
+                                label = { Text(net) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val parsedLimit = creditLimit.toDoubleOrNull() ?: 0.0
+                        val bDay = billingDay.toIntOrNull() ?: 15
+                        val dDay = dueDay.toIntOrNull() ?: 5
+                        if (cardName.isNotBlank() && bankName.isNotBlank() && last4Digits.length == 4 && parsedLimit > 0) {
+                            onAddNewCard(
+                                CreditCardEntity(
+                                    cardName = cardName.trim(),
+                                    bankName = bankName.trim(),
+                                    last4Digits = last4Digits.trim(),
+                                    creditLimit = parsedLimit,
+                                    billingCycleDay = bDay,
+                                    paymentDueDay = dDay,
+                                    network = selectedNetwork
+                                )
+                            )
+                            showAddCardDialog = false
+                        } else {
+                            formError = true
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeon)
+                ) {
+                    Text("Save Card")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddCardDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     // Settle Bill Dialog
