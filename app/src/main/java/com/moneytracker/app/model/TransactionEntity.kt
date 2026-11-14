@@ -13,6 +13,8 @@ data class TransactionEntity(
     val category: Category,
     val paymentMethod: PaymentMethod,
     val creditCardId: Long? = null,
+    val bankAccountId: Long? = null,
+    val bankName: String? = null,
     val dateMillis: Long = System.currentTimeMillis(),
     val note: String = "",
     val isRecurring: Boolean = false,

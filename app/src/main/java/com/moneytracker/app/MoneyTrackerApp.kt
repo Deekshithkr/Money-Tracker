@@ -15,7 +15,8 @@ class MoneyTrackerApp : Application() {
             database.transactionDao(),
             database.creditCardDao(),
             database.recurringDao(),
-            database.borrowedDao()
+            database.borrowedDao(),
+            database.bankAccountDao()
         )
     }
 }

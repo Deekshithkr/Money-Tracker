@@ -13,8 +13,8 @@ android {
         applicationId = "com.moneytracker.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -45,6 +45,9 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/native-image/**"
+            excludes += "META-INF/native-image/**"
+            pickFirsts += "META-INF/native-image/native-image.properties"
         }
     }
 }
@@ -71,6 +74,15 @@ dependencies {
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
+
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
+
+    // Google Sign-In
+    implementation(libs.play.services.auth)
+
+    // MongoDB Driver
+    implementation(libs.mongodb.driver.sync)
 
     // Debugging & Testing
     testImplementation(libs.junit)

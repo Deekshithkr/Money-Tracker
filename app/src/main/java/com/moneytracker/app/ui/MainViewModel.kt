@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.moneytracker.app.data.CategorySpend
 import com.moneytracker.app.data.MoneyTrackerRepository
 import com.moneytracker.app.data.PaymentMethodSpend
+import com.moneytracker.app.model.BankAccountEntity
+import com.moneytracker.app.model.BankAccountType
 import com.moneytracker.app.model.BorrowedItemEntity
 import com.moneytracker.app.model.Category
 import com.moneytracker.app.model.CreditCardEntity
@@ -13,7 +15,12 @@ import com.moneytracker.app.model.PaymentMethod
 import com.moneytracker.app.model.RecurringItemEntity
 import com.moneytracker.app.model.TransactionEntity
 import com.moneytracker.app.model.TransactionType
+import com.moneytracker.app.sync.GoogleAuthDriveHelper
+import com.moneytracker.app.sync.MongoDbSyncHelper
+import com.moneytracker.app.sync.SyncResult
+import com.moneytracker.app.sync.UserProfile
 import com.moneytracker.app.ui.components.MonthTrendData
+import com.moneytracker.app.util.ExcelExportHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +30,14 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
+data class BankCashFlow(
+    val bank: BankAccountEntity,
+    val totalInflow: Double,
+    val totalOutflow: Double,
+    val netCashFlow: Double,
+    val currentBalance: Double
+)
+
 data class DashboardUiState(
     val totalBalance: Double = 0.0,
     val monthlyIncome: Double = 0.0,
@@ -30,6 +45,8 @@ data class DashboardUiState(
     val monthlyCreditCardSpend: Double = 0.0,
     val recentTransactions: List<TransactionEntity> = emptyList(),
     val creditCards: List<CreditCardEntity> = emptyList(),
+    val bankAccounts: List<BankAccountEntity> = emptyList(),
+    val bankCashFlows: List<BankCashFlow> = emptyList(),
     val cardSpendMap: Map<Long, Double> = emptyMap(),
     val upcomingRecurring: List<RecurringItemEntity> = emptyList(),
     val activeLoans: List<RecurringItemEntity> = emptyList(),
@@ -44,7 +61,8 @@ data class DashboardUiState(
 private data class CoreData(
     val recents: List<TransactionEntity>,
     val cards: List<CreditCardEntity>,
-    val recurring: List<RecurringItemEntity>
+    val recurring: List<RecurringItemEntity>,
+    val banks: List<BankAccountEntity>
 )
 
 private data class ExtraData(
@@ -72,6 +90,9 @@ class MainViewModel(
     val allCreditCards: StateFlow<List<CreditCardEntity>> = repository.allCreditCards
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val allBankAccounts: StateFlow<List<BankAccountEntity>> = repository.allBankAccounts
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val activeRecurringItems: StateFlow<List<RecurringItemEntity>> = repository.activeRecurringItems
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -84,14 +105,24 @@ class MainViewModel(
     val allBorrowedItems: StateFlow<List<BorrowedItemEntity>> = repository.allBorrowedItems
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _userProfile = MutableStateFlow(UserProfile())
+    val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow<SyncResult?>(null)
+    val syncStatus: StateFlow<SyncResult?> = _syncStatus.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
     // Combined Dashboard state with pure dynamic calculation
     val dashboardState: StateFlow<DashboardUiState> = combine(
         combine(
             repository.recentTransactions,
             repository.allCreditCards,
-            repository.activeRecurringItems
-        ) { recents, cards, recurring ->
-            CoreData(recents, cards, recurring)
+            repository.activeRecurringItems,
+            repository.allBankAccounts
+        ) { recents, cards, recurring, banks ->
+            CoreData(recents, cards, recurring, banks)
         },
         combine(
             repository.activeLoans,
@@ -106,6 +137,7 @@ class MainViewModel(
         val recents = core.recents
         val cards = core.cards
         val recurring = core.recurring
+        val banks = core.banks
         val loans = extra.loans
         val allTx = extra.allTx
         val borrowedItems = extra.borrowed
@@ -129,6 +161,20 @@ class MainViewModel(
                 .sumOf { it.amount }
         }
 
+        // Bank Cash Flows
+        val bankFlows = banks.map { bank ->
+            val inflow = allTx.filter { it.bankAccountId == bank.id && it.type == TransactionType.INCOME }.sumOf { it.amount }
+            val outflow = allTx.filter { it.bankAccountId == bank.id && it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+            val net = inflow - outflow
+            BankCashFlow(
+                bank = bank,
+                totalInflow = inflow,
+                totalOutflow = outflow,
+                netCashFlow = net,
+                currentBalance = bank.initialBalance + net
+            )
+        }
+
         // Real dynamic 4-month trend
         val trends = calculateTrends(allTx)
 
@@ -141,6 +187,8 @@ class MainViewModel(
             monthlyCreditCardSpend = monthlyCCSpend,
             recentTransactions = recents,
             creditCards = cards,
+            bankAccounts = banks,
+            bankCashFlows = bankFlows,
             cardSpendMap = cardSpends,
             upcomingRecurring = recurring,
             activeLoans = loans,
@@ -153,6 +201,10 @@ class MainViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardUiState())
 
+    fun setUserProfile(profile: UserProfile) {
+        _userProfile.value = profile
+    }
+
     fun addTransaction(
         title: String,
         amount: Double,
@@ -160,6 +212,8 @@ class MainViewModel(
         category: Category,
         paymentMethod: PaymentMethod,
         creditCardId: Long? = null,
+        bankAccountId: Long? = null,
+        bankName: String? = null,
         note: String = "",
         dateMillis: Long = System.currentTimeMillis()
     ) {
@@ -172,10 +226,114 @@ class MainViewModel(
                     category = category,
                     paymentMethod = paymentMethod,
                     creditCardId = creditCardId,
+                    bankAccountId = bankAccountId,
+                    bankName = bankName,
                     dateMillis = dateMillis,
                     note = note
                 )
             )
+        }
+    }
+
+    fun addBankAccount(
+        bankName: String,
+        accountHolder: String = "",
+        accountNumberLast4: String = "",
+        accountType: BankAccountType = BankAccountType.SAVINGS,
+        initialBalance: Double = 0.0,
+        colorHex: String = "#10B981"
+    ) {
+        viewModelScope.launch {
+            repository.addBankAccount(
+                BankAccountEntity(
+                    bankName = bankName,
+                    accountHolder = accountHolder,
+                    accountNumberLast4 = accountNumberLast4,
+                    accountType = accountType,
+                    initialBalance = initialBalance,
+                    colorHex = colorHex
+                )
+            )
+        }
+    }
+
+    fun deleteBankAccount(bank: BankAccountEntity) {
+        viewModelScope.launch {
+            repository.deleteBankAccount(bank)
+        }
+    }
+
+    fun testMongoConnection(onResult: (SyncResult) -> Unit = {}) {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            val result = MongoDbSyncHelper.testConnection()
+            _syncStatus.value = result
+            _isSyncing.value = false
+            onResult(result)
+        }
+    }
+
+    fun pushToMongoDb(onResult: (SyncResult) -> Unit = {}) {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            val txs = allTransactions.value
+            val banks = allBankAccounts.value
+            val cards = allCreditCards.value
+            val recs = activeRecurringItems.value
+            val borrowed = allBorrowedItems.value
+            val email = _userProfile.value.email.ifBlank { "guest@moneytracker.app" }
+
+            val result = MongoDbSyncHelper.pushAllData(
+                userEmail = email,
+                transactions = txs,
+                bankAccounts = banks,
+                creditCards = cards,
+                recurringItems = recs,
+                borrowedItems = borrowed
+            )
+            _syncStatus.value = result
+            _isSyncing.value = false
+            onResult(result)
+        }
+    }
+
+    fun backupToGoogleDrive(context: android.content.Context) {
+        val txs = allTransactions.value
+        val banks = allBankAccounts.value
+        val cards = allCreditCards.value
+        val recs = activeRecurringItems.value
+        val borrowed = allBorrowedItems.value
+
+        val file = GoogleAuthDriveHelper.createBackupJsonFile(
+            context = context,
+            transactions = txs,
+            bankAccounts = banks,
+            creditCards = cards,
+            recurringItems = recs,
+            borrowedItems = borrowed
+        )
+        if (file != null) {
+            GoogleAuthDriveHelper.launchGoogleDriveBackup(context, file)
+        }
+    }
+
+    fun exportToExcel(context: android.content.Context) {
+        val txs = allTransactions.value
+        val banks = allBankAccounts.value
+        val cards = allCreditCards.value
+        val recs = activeRecurringItems.value
+        val borrowed = allBorrowedItems.value
+
+        val file = ExcelExportHelper.exportToExcel(
+            context = context,
+            transactions = txs,
+            bankAccounts = banks,
+            creditCards = cards,
+            recurringItems = recs,
+            borrowedItems = borrowed
+        )
+        if (file != null) {
+            ExcelExportHelper.shareExportFile(context, file)
         }
     }
 

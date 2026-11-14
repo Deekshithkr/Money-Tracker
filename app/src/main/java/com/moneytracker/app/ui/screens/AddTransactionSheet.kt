@@ -61,6 +61,7 @@ import java.util.Locale
 fun AddTransactionSheet(
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     creditCards: List<CreditCardEntity>,
+    bankAccounts: List<com.moneytracker.app.model.BankAccountEntity> = emptyList(),
     currencySymbol: String = "₹",
     defaultType: TransactionType = TransactionType.EXPENSE,
     onDismiss: () -> Unit,
@@ -71,6 +72,8 @@ fun AddTransactionSheet(
         category: Category,
         paymentMethod: PaymentMethod,
         creditCardId: Long?,
+        bankAccountId: Long?,
+        bankName: String?,
         note: String,
         dateMillis: Long
     ) -> Unit
@@ -83,6 +86,7 @@ fun AddTransactionSheet(
     }
     var selectedPaymentMethod by remember { mutableStateOf(PaymentMethod.UPI) }
     var selectedCreditCardId by remember { mutableStateOf(creditCards.firstOrNull()?.id) }
+    var selectedBankAccountId by remember { mutableStateOf<Long?>(bankAccounts.firstOrNull()?.id) }
     var note by remember { mutableStateOf("") }
     var daysOffset by remember { mutableIntStateOf(0) }
     var showError by remember { mutableStateOf(false) }
@@ -342,6 +346,34 @@ fun AddTransactionSheet(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            // If Bank Accounts exist and not paying via pure Credit Card: Select Bank
+            if (bankAccounts.isNotEmpty() && selectedPaymentMethod != PaymentMethod.CREDIT_CARD) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Link Bank Account (For Cash Flow Tracking)",
+                    color = Color(0xFF34D399),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(bankAccounts) { bank ->
+                        FilterChip(
+                            selected = selectedBankAccountId == bank.id,
+                            onClick = { selectedBankAccountId = bank.id },
+                            label = { Text("${bank.bankName} ${if (bank.accountNumberLast4.isNotBlank()) "(••${bank.accountNumberLast4})" else ""}") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFF10B981),
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
             // Optional Note
             OutlinedTextField(
                 value = note,
@@ -361,6 +393,7 @@ fun AddTransactionSheet(
                         val cal = Calendar.getInstance().apply {
                             add(Calendar.DAY_OF_YEAR, -daysOffset)
                         }
+                        val chosenBank = bankAccounts.find { it.id == selectedBankAccountId }
                         onSave(
                             title.trim(),
                             parsedAmt,
@@ -368,6 +401,8 @@ fun AddTransactionSheet(
                             selectedCategory,
                             selectedPaymentMethod,
                             if (selectedPaymentMethod == PaymentMethod.CREDIT_CARD) selectedCreditCardId else null,
+                            if (selectedPaymentMethod != PaymentMethod.CREDIT_CARD) selectedBankAccountId else null,
+                            if (selectedPaymentMethod != PaymentMethod.CREDIT_CARD) chosenBank?.bankName else null,
                             note.trim(),
                             cal.timeInMillis
                         )

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -33,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,6 +45,7 @@ import com.moneytracker.app.ui.screens.AnalyticsScreen
 import com.moneytracker.app.ui.screens.CreditCardScreen
 import com.moneytracker.app.ui.screens.DashboardScreen
 import com.moneytracker.app.ui.screens.RecurringScreen
+import com.moneytracker.app.ui.screens.SettingsScreen
 import com.moneytracker.app.ui.screens.TransactionsScreen
 import com.moneytracker.app.ui.theme.BgDark
 import com.moneytracker.app.ui.theme.PrimaryNeon
@@ -54,11 +57,13 @@ sealed class Screen(val title: String, val icon: ImageVector, val index: Int) {
     object CreditCards : Screen("Cards", Icons.Default.CreditCard, 2)
     object Recurring : Screen("Recurring", Icons.Default.Sync, 3)
     object History : Screen("History", Icons.AutoMirrored.Filled.ReceiptLong, 4)
+    object Settings : Screen("Settings", Icons.Default.Settings, 5)
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
+    val context = LocalContext.current
     val dashboardState by viewModel.dashboardState.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
     val currencySymbol by viewModel.currencySymbol.collectAsState()
@@ -73,7 +78,8 @@ fun MainScreen(viewModel: MainViewModel) {
         Screen.Analytics,
         Screen.CreditCards,
         Screen.Recurring,
-        Screen.History
+        Screen.History,
+        Screen.Settings
     )
 
     Scaffold(
@@ -97,7 +103,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         label = {
                             Text(
                                 text = screen.title,
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
                         },
@@ -113,19 +119,21 @@ fun MainScreen(viewModel: MainViewModel) {
             }
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    defaultSheetType = TransactionType.EXPENSE
-                    showAddSheet = true
-                },
-                containerColor = PrimaryNeon,
-                contentColor = Color.White,
-                shape = CircleShape
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Quick Add Transaction"
-                )
+            if (selectedTabIndex != 5) {
+                FloatingActionButton(
+                    onClick = {
+                        defaultSheetType = TransactionType.EXPENSE
+                        showAddSheet = true
+                    },
+                    containerColor = PrimaryNeon,
+                    contentColor = Color.White,
+                    shape = CircleShape
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Quick Add Transaction"
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -159,7 +167,9 @@ fun MainScreen(viewModel: MainViewModel) {
                         },
                         onReceiveRepayment = { item, amt ->
                             viewModel.recordBorrowedRepayment(item, amt)
-                        }
+                        },
+                        onOpenSettings = { selectedTabIndex = 5 },
+                        onExportExcel = { viewModel.exportToExcel(context) }
                     )
                     1 -> AnalyticsScreen(
                         state = dashboardState,
@@ -192,6 +202,9 @@ fun MainScreen(viewModel: MainViewModel) {
                             viewModel.deleteTransaction(tx)
                         }
                     )
+                    5 -> SettingsScreen(
+                        viewModel = viewModel
+                    )
                 }
             }
         }
@@ -200,10 +213,11 @@ fun MainScreen(viewModel: MainViewModel) {
     if (showAddSheet) {
         AddTransactionSheet(
             creditCards = dashboardState.creditCards,
+            bankAccounts = dashboardState.bankAccounts,
             currencySymbol = currencySymbol,
             defaultType = defaultSheetType,
             onDismiss = { showAddSheet = false },
-            onSave = { title, amount, type, category, paymentMethod, cardId, note, dateMillis ->
+            onSave = { title, amount, type, category, paymentMethod, cardId, bankId, bankName, note, dateMillis ->
                 viewModel.addTransaction(
                     title = title,
                     amount = amount,
@@ -211,6 +225,8 @@ fun MainScreen(viewModel: MainViewModel) {
                     category = category,
                     paymentMethod = paymentMethod,
                     creditCardId = cardId,
+                    bankAccountId = bankId,
+                    bankName = bankName,
                     note = note,
                     dateMillis = dateMillis
                 )

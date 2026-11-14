@@ -16,9 +16,10 @@ import kotlinx.coroutines.CoroutineScope
         TransactionEntity::class,
         CreditCardEntity::class,
         RecurringItemEntity::class,
-        BorrowedItemEntity::class
+        BorrowedItemEntity::class,
+        com.moneytracker.app.model.BankAccountEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -27,12 +28,14 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun creditCardDao(): CreditCardDao
     abstract fun recurringDao(): RecurringDao
     abstract fun borrowedDao(): BorrowedDao
+    abstract fun bankAccountDao(): BankAccountDao
 
     suspend fun clearAllData() {
         transactionDao().deleteAll()
         creditCardDao().deleteAll()
         recurringDao().deleteAll()
         borrowedDao().deleteAll()
+        bankAccountDao().deleteAll()
     }
 
     companion object {

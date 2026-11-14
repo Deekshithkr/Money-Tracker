@@ -4,7 +4,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Deep premium dark slate background -->
     <path
-        android:fillColor="#0B0F19"
+        android:fillColor="#090D16"
         android:pathData="M0,0h108v108h-108z" />
+    <!-- Gradient ring / glow effect -->
+    <path
+        android:fillColor="#151F32"
+        android:pathData="M54,6C27.5,6 6,27.5 6,54C6,80.5 27.5,102 54,102C80.5,102 102,80.5 102,54C102,27.5 80.5,6 54,6Z" />
+    <path
+        android:fillColor="#0E1626"
+        android:pathData="M54,14C31.9,14 14,31.9 14,54C14,76.1 31.9,94 54,94C76.1,94 94,76.1 94,54C94,31.9 76.1,14 54,14Z" />
 </vector>

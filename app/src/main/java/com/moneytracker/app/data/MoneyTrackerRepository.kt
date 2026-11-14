@@ -13,11 +13,13 @@ class MoneyTrackerRepository(
     private val transactionDao: TransactionDao,
     private val creditCardDao: CreditCardDao,
     private val recurringDao: RecurringDao,
-    private val borrowedDao: BorrowedDao
+    private val borrowedDao: BorrowedDao,
+    private val bankAccountDao: BankAccountDao
 ) {
     val allTransactions: Flow<List<TransactionEntity>> = transactionDao.getAllTransactions()
     val recentTransactions: Flow<List<TransactionEntity>> = transactionDao.getRecentTransactions(15)
     val allCreditCards: Flow<List<CreditCardEntity>> = creditCardDao.getAllCards()
+    val allBankAccounts: Flow<List<com.moneytracker.app.model.BankAccountEntity>> = bankAccountDao.getAllBankAccounts()
     val activeRecurringItems: Flow<List<RecurringItemEntity>> = recurringDao.getActiveRecurringItems()
     val activeLoans: Flow<List<RecurringItemEntity>> = recurringDao.getActiveLoans()
     val nonLoanRecurringItems: Flow<List<RecurringItemEntity>> = recurringDao.getNonLoanRecurringItems()
@@ -147,10 +149,20 @@ class MoneyTrackerRepository(
         )
     }
 
+    suspend fun addBankAccount(bank: com.moneytracker.app.model.BankAccountEntity): Long =
+        bankAccountDao.insertBankAccount(bank)
+
+    suspend fun updateBankAccount(bank: com.moneytracker.app.model.BankAccountEntity) =
+        bankAccountDao.updateBankAccount(bank)
+
+    suspend fun deleteBankAccount(bank: com.moneytracker.app.model.BankAccountEntity) =
+        bankAccountDao.deleteBankAccount(bank)
+
     suspend fun clearAllData() {
         transactionDao.deleteAll()
         creditCardDao.deleteAll()
         recurringDao.deleteAll()
         borrowedDao.deleteAll()
+        bankAccountDao.deleteAll()
     }
 }

@@ -23,18 +23,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.CallSplit
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -78,7 +82,9 @@ fun DashboardScreen(
     onQuickAddExpense: () -> Unit,
     onQuickAddIncome: () -> Unit,
     onAddBorrowed: () -> Unit = {},
-    onReceiveRepayment: (BorrowedItemEntity, Double) -> Unit = { _, _ -> }
+    onReceiveRepayment: (BorrowedItemEntity, Double) -> Unit = { _, _ -> },
+    onOpenSettings: () -> Unit = {},
+    onExportExcel: () -> Unit = {}
 ) {
     val formatter = remember { NumberFormat.getNumberInstance(Locale("en", "IN")) }
     val dueDateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
@@ -116,19 +122,39 @@ fun DashboardScreen(
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .background(SurfaceElevated, CircleShape)
-                        .border(1.dp, BorderDark, CircleShape),
-                    contentAlignment = Alignment.Center
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = "Notifications",
-                        tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(20.dp)
-                    )
+                    IconButton(
+                        onClick = onExportExcel,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(SurfaceElevated, CircleShape)
+                            .border(1.dp, BorderDark, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FileDownload,
+                            contentDescription = "Export to Excel",
+                            tint = Color(0xFF34D399),
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(SurfaceElevated, CircleShape)
+                            .border(1.dp, BorderDark, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -330,6 +356,114 @@ fun DashboardScreen(
                         color = PrimaryNeon,
                         trackColor = Color(0xFF334155)
                     )
+                }
+            }
+        }
+
+        // Bank Accounts & Cash Flow Section
+        item {
+            Spacer(modifier = Modifier.height(18.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(SurfaceElevated)
+                    .border(1.dp, BorderDark, RoundedCornerShape(20.dp))
+                    .padding(16.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(Color(0xFF047857), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalance,
+                                    contentDescription = "Banks",
+                                    tint = Color(0xFF34D399),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Bank Cash Flow",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${state.bankAccounts.size} banks connected",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        TextButton(onClick = onOpenSettings) {
+                            Text(
+                                text = if (state.bankAccounts.isEmpty()) "+ Add Bank" else "Manage",
+                                color = PrimaryNeon,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (state.bankCashFlows.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(state.bankCashFlows) { flow ->
+                                val bank = flow.bank
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(Color(0xFF1E293B))
+                                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(14.dp))
+                                        .padding(12.dp)
+                                        .width(170.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = bank.bankName,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            text = "${bank.accountType.displayName} ${if (bank.accountNumberLast4.isNotBlank()) "••" + bank.accountNumberLast4 else ""}",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 10.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "Bal: $currencySymbol${formatter.format(flow.currentBalance.toLong())}",
+                                            color = Color(0xFF38BDF8),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text("+₹%,.0f".format(flow.totalInflow), color = IncomeGreen, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                                            Text("-₹%,.0f".format(flow.totalOutflow), color = ExpenseRed, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -37,4 +37,10 @@ class Converters {
 
     @TypeConverter
     fun toRecurringFrequency(value: String): RecurringFrequency = RecurringFrequency.valueOf(value)
+
+    @TypeConverter
+    fun fromBankAccountType(type: com.moneytracker.app.model.BankAccountType): String = type.name
+
+    @TypeConverter
+    fun toBankAccountType(value: String): com.moneytracker.app.model.BankAccountType = com.moneytracker.app.model.BankAccountType.valueOf(value)
 }
