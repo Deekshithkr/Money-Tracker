@@ -766,7 +766,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Money Tracker v1.2.0 (Build 3)",
+                    text = "Money Tracker v1.3.0 (Build 4)",
                     color = Color(0xFF6B7280),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
