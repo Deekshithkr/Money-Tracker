@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -19,12 +18,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,17 +42,25 @@ import androidx.compose.ui.unit.sp
 import com.moneytracker.app.model.PaymentMethod
 import com.moneytracker.app.model.TransactionEntity
 import com.moneytracker.app.model.TransactionType
+import com.moneytracker.app.ui.theme.ExpenseRed
 import com.moneytracker.app.ui.theme.PrimaryNeon
 import com.moneytracker.app.ui.theme.SurfaceDark
+import java.text.NumberFormat
+import java.util.Locale
 
 @Composable
 fun TransactionsScreen(
     transactions: List<TransactionEntity>,
     currencySymbol: String,
-    onDeleteTransaction: (TransactionEntity) -> Unit
+    onDeleteTransaction: (TransactionEntity) -> Unit,
+    onEditTransaction: (TransactionEntity) -> Unit = {}
 ) {
+    val formatter = remember { NumberFormat.getNumberInstance(Locale("en", "IN")) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("ALL") }
+
+    var editingTx by remember { mutableStateOf<TransactionEntity?>(null) }
+    var deletingTx by remember { mutableStateOf<TransactionEntity?>(null) }
 
     val filteredList = remember(transactions, searchQuery, selectedFilter) {
         transactions.filter { tx ->
@@ -161,9 +172,54 @@ fun TransactionsScreen(
                 TransactionItemRow(
                     tx = tx,
                     currencySymbol = currencySymbol,
+                    onEdit = { editingTx = tx },
+                    onDelete = { deletingTx = tx },
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
                 )
             }
         }
+    }
+
+    // Edit Transaction Dialog
+    editingTx?.let { tx ->
+        EditTransactionDialog(
+            tx = tx,
+            onDismiss = { editingTx = null },
+            onSave = { updated ->
+                onEditTransaction(updated)
+                editingTx = null
+            }
+        )
+    }
+
+    // Delete Confirmation Dialog
+    deletingTx?.let { tx ->
+        AlertDialog(
+            onDismissRequest = { deletingTx = null },
+            containerColor = Color(0xFF1E293B),
+            title = { Text("Delete Transaction?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Are you sure you want to delete \"${tx.title}\" (${if (tx.type == TransactionType.EXPENSE) "-" else "+"}$currencySymbol${formatter.format(tx.amount.toLong())})?",
+                    color = Color(0xFFCBD5E1)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteTransaction(tx)
+                        deletingTx = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseRed)
+                ) {
+                    Text("Delete", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingTx = null }) {
+                    Text("Cancel", color = Color(0xFF94A3B8))
+                }
+            }
+        )
     }
 }

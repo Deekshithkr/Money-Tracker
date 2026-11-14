@@ -53,6 +53,9 @@ class MoneyTrackerRepository(
     suspend fun addTransaction(transaction: TransactionEntity): Long =
         transactionDao.insert(transaction)
 
+    suspend fun updateTransaction(transaction: TransactionEntity) =
+        transactionDao.update(transaction)
+
     suspend fun deleteTransaction(transaction: TransactionEntity) =
         transactionDao.delete(transaction)
 
@@ -61,6 +64,9 @@ class MoneyTrackerRepository(
 
     suspend fun addRecurringItem(item: RecurringItemEntity): Long =
         recurringDao.insert(item)
+
+    suspend fun updateRecurringItem(item: RecurringItemEntity) =
+        recurringDao.update(item)
 
     suspend fun deleteRecurringItem(item: RecurringItemEntity) =
         recurringDao.delete(item)
@@ -164,5 +170,19 @@ class MoneyTrackerRepository(
         recurringDao.deleteAll()
         borrowedDao.deleteAll()
         bankAccountDao.deleteAll()
+    }
+
+    suspend fun restoreAllData(
+        transactions: List<TransactionEntity>,
+        bankAccounts: List<com.moneytracker.app.model.BankAccountEntity>,
+        creditCards: List<CreditCardEntity>,
+        recurringItems: List<RecurringItemEntity>,
+        borrowedItems: List<BorrowedItemEntity>
+    ) {
+        if (transactions.isNotEmpty()) transactionDao.insertAll(transactions)
+        if (creditCards.isNotEmpty()) creditCardDao.insertAll(creditCards)
+        if (recurringItems.isNotEmpty()) recurringDao.insertAll(recurringItems)
+        bankAccounts.forEach { bankAccountDao.insertBankAccount(it) }
+        borrowedItems.forEach { borrowedDao.insert(it) }
     }
 }

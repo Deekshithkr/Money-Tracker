@@ -73,6 +73,13 @@ fun MainScreen(viewModel: MainViewModel) {
     var showAddBorrowedSheet by remember { mutableStateOf(false) }
     var defaultSheetType by remember { mutableStateOf(TransactionType.EXPENSE) }
 
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val saved = com.moneytracker.app.sync.GoogleAuthDriveHelper.getUserProfile(context)
+        if (saved.isSignedIn) {
+            viewModel.setUserProfile(saved)
+        }
+    }
+
     val screens = listOf(
         Screen.Dashboard,
         Screen.Analytics,
@@ -169,7 +176,12 @@ fun MainScreen(viewModel: MainViewModel) {
                             viewModel.recordBorrowedRepayment(item, amt)
                         },
                         onOpenSettings = { selectedTabIndex = 5 },
-                        onExportExcel = { viewModel.exportToExcel(context) }
+                        onExportExcel = { viewModel.exportToExcel(context) },
+                        onSelectBankFilter = { bankId -> viewModel.selectBankFilter(bankId) },
+                        onEditTransaction = { tx -> viewModel.updateTransaction(tx) },
+                        onDeleteTransaction = { tx -> viewModel.deleteTransaction(tx) },
+                        onEditBorrowedItem = { item -> viewModel.updateBorrowedItem(item) },
+                        onDeleteBorrowedItem = { item -> viewModel.deleteBorrowedItem(item) }
                     )
                     1 -> AnalyticsScreen(
                         state = dashboardState,
@@ -193,6 +205,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         },
                         onAddRecurringItem = { item ->
                             viewModel.addRecurringItem(item)
+                        },
+                        onUpdateRecurringItem = { item ->
+                            viewModel.updateRecurringItem(item)
+                        },
+                        onDeleteRecurringItem = { item ->
+                            viewModel.deleteRecurringItem(item)
                         }
                     )
                     4 -> TransactionsScreen(
@@ -200,6 +218,9 @@ fun MainScreen(viewModel: MainViewModel) {
                         currencySymbol = currencySymbol,
                         onDeleteTransaction = { tx ->
                             viewModel.deleteTransaction(tx)
+                        },
+                        onEditTransaction = { tx ->
+                            viewModel.updateTransaction(tx)
                         }
                     )
                     5 -> SettingsScreen(

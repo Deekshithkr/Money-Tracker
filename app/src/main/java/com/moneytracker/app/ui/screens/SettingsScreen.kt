@@ -1,13 +1,10 @@
 package com.moneytracker.app.ui.screens
 
 import android.app.Activity
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,27 +18,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -73,18 +66,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.moneytracker.app.model.BankAccountEntity
 import com.moneytracker.app.model.BankAccountType
 import com.moneytracker.app.notification.RecurringReminderWorker
 import com.moneytracker.app.sync.GoogleAuthDriveHelper
 import com.moneytracker.app.sync.UserProfile
+import com.moneytracker.app.ui.BankCashFlow
 import com.moneytracker.app.ui.MainViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -99,13 +91,14 @@ fun SettingsScreen(
     val context = LocalContext.current
     val dashboardState by viewModel.dashboardState.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
-    val syncStatus by viewModel.syncStatus.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
     var showAddBankDialog by remember { mutableStateOf(false) }
+    var showManualAccountDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
     var reminderNotificationEnabled by remember { mutableStateOf(true) }
+    var statusFeedbackMessage by remember { mutableStateOf<String?>(null) }
 
     // Google Sign-In launcher
     val googleSignInLauncher = rememberLauncherForActivityResult(
@@ -117,17 +110,34 @@ fun SettingsScreen(
                 val account = task.result
                 if (account != null) {
                     GoogleAuthDriveHelper.saveUserAccount(context, account)
-                    viewModel.setUserProfile(
-                        UserProfile(
-                            isSignedIn = true,
-                            displayName = account.displayName ?: "Google User",
-                            email = account.email ?: "",
-                            photoUrl = account.photoUrl?.toString() ?: ""
-                        )
+                    val profile = UserProfile(
+                        isSignedIn = true,
+                        displayName = account.displayName ?: "Google User",
+                        email = account.email ?: "",
+                        photoUrl = account.photoUrl?.toString() ?: ""
                     )
+                    viewModel.setUserProfile(profile)
+                    // Automatically pull any cloud data for this user
+                    viewModel.pullUserDataFromMongo(profile.email) { _, msg ->
+                        statusFeedbackMessage = msg
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                statusFeedbackMessage = "Google Sign-In failed (${e.message}). You can use Manual Email Account creation below."
+            }
+        } else {
+            statusFeedbackMessage = "Google Sign-In canceled or unconfigured. You can create an instant email account below."
+        }
+    }
+
+    // Google Drive / JSON Import launcher
+    val driveImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.restoreFromDriveBackup(context, uri) { _, msg ->
+                statusFeedbackMessage = msg
             }
         }
     }
@@ -177,7 +187,7 @@ fun SettingsScreen(
         }
 
         // -------------------------------------------------------------
-        // 1. Google SSO Account Card
+        // 1. Account & SSO / Manual Creation Card
         // -------------------------------------------------------------
         item {
             Card(
@@ -188,7 +198,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text(
-                        text = "ACCOUNT & SSO LOGIN",
+                        text = "ACCOUNT & CLOUD IDENTITY",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF9CA3AF),
@@ -222,7 +232,7 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = userProfile.displayName.ifBlank { "Google User" },
+                                    text = userProfile.displayName.ifBlank { "Active User" },
                                     fontWeight = FontWeight.SemiBold,
                                     color = Color.White,
                                     fontSize = 16.sp
@@ -242,7 +252,7 @@ fun SettingsScreen(
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "SSO Verified",
+                                        text = "Cloud Partition Active",
                                         color = Color(0xFF10B981),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Medium
@@ -260,47 +270,62 @@ fun SettingsScreen(
                                 Text("Sign Out", fontSize = 12.sp, color = Color(0xFFEF4444))
                             }
                         }
-                    } else {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Button to pull cloud data for this account
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.pullUserDataFromMongo(userProfile.email) { _, msg ->
+                                    statusFeedbackMessage = msg
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = !isSyncing
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1E293B)),
-                                contentAlignment = Alignment.Center
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Pull / Restore My Cloud Data", fontSize = 12.sp, color = Color(0xFF38BDF8))
+                        }
+                    } else {
+                        Column {
+                            Text(
+                                text = "Sign in or create your personal account to ensure all transactions and loans are backed up to your dedicated cloud partition.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
-                                    contentDescription = null,
-                                    tint = Color(0xFF94A3B8)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Sign in with Google",
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White,
-                                    fontSize = 15.sp
-                                )
-                                Text(
-                                    text = "Sync backups to Drive & MongoDB cluster",
-                                    color = Color(0xFF9CA3AF),
-                                    fontSize = 12.sp
-                                )
-                            }
-                            Button(
-                                onClick = {
-                                    val client = GoogleAuthDriveHelper.getGoogleSignInClient(context)
-                                    googleSignInLauncher.launch(client.signInIntent)
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
-                            ) {
-                                Text("Sign In", fontSize = 13.sp)
+                                Button(
+                                    onClick = {
+                                        val client = GoogleAuthDriveHelper.getGoogleSignInClient(context)
+                                        googleSignInLauncher.launch(client.signInIntent)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                                ) {
+                                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Google SSO", fontSize = 12.sp)
+                                }
+
+                                Button(
+                                    onClick = { showManualAccountDialog = true },
+                                    modifier = Modifier.weight(1.1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669))
+                                ) {
+                                    Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Manual Account", fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -309,7 +334,7 @@ fun SettingsScreen(
         }
 
         // -------------------------------------------------------------
-        // 2. Cloud Backup & Database Sync
+        // 2. Cloud Backup & Automatic Sync (No Manual Push)
         // -------------------------------------------------------------
         item {
             Card(
@@ -325,7 +350,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "CLOUD BACKUP & DATABASE SYNC",
+                            text = "CLOUD BACKUP & AUTO-SYNC",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF9CA3AF),
@@ -339,14 +364,16 @@ fun SettingsScreen(
                             )
                         }
                     }
+
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // MongoDB Atlas Sync Option
+                    // Real-Time MongoDB Auto-Sync Active Badge
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF1E293B))
+                            .background(Color(0xFF064E3B).copy(alpha = 0.5f))
+                            .border(1.dp, Color(0xFF10B981).copy(alpha = 0.35f), RoundedCornerShape(14.dp))
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -358,8 +385,8 @@ fun SettingsScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Storage,
-                                contentDescription = "MongoDB",
+                                imageVector = Icons.Default.CloudSync,
+                                contentDescription = "Auto-Sync",
                                 tint = Color(0xFF34D399),
                                 modifier = Modifier.size(22.dp)
                             )
@@ -367,32 +394,23 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "MongoDB Atlas Cluster",
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
-                                fontSize = 14.sp
+                                text = "⚡ Real-Time Auto-Sync: ACTIVE",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF34D399),
+                                fontSize = 13.sp
                             )
                             Text(
-                                text = "cluster0.zrezwp0.mongodb.net",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 11.sp
+                                text = "Every transaction, loan & bank auto-syncs silently to MongoDB in the background.",
+                                color = Color(0xFFE2E8F0),
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
                             )
-                        }
-                        Button(
-                            onClick = { viewModel.pushToMongoDb() },
-                            enabled = !isSyncing,
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
-                        ) {
-                            Icon(imageVector = Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Push", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Google Drive Backup Option
+                    // Google Drive Backup & Import Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -427,7 +445,7 @@ fun SettingsScreen(
                             val backupText = if (lastBackup > 0) {
                                 "Last: " + SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(lastBackup))
                             } else {
-                                "Ready to backup"
+                                "Ready to backup / restore"
                             }
                             Text(
                                 text = backupText,
@@ -435,40 +453,34 @@ fun SettingsScreen(
                                 fontSize = 11.sp
                             )
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Button(
                             onClick = { viewModel.backupToGoogleDrive(context) },
+                            modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
                         ) {
-                            Icon(imageVector = Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Backup", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Backup to Drive", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
-                    }
 
-                    // Sync Result Message banner if present
-                    syncStatus?.let { status ->
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (status.isSuccess) Color(0xFF064E3B) else Color(0xFF7F1D1D))
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Button(
+                            onClick = { driveImportLauncher.launch("*/*") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
                         ) {
-                            Icon(
-                                imageVector = if (status.isSuccess) Icons.Default.CheckCircle else Icons.Default.Error,
-                                contentDescription = null,
-                                tint = if (status.isSuccess) Color(0xFF34D399) else Color(0xFFF87171),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = status.message,
-                                color = Color.White,
-                                fontSize = 12.sp
-                            )
+                            Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Import from Drive", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -493,14 +505,14 @@ fun SettingsScreen(
                         color = Color(0xFF9CA3AF),
                         letterSpacing = 1.sp
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "Export your entire financial diary with executive KPI dashboards, bank cash flow sheets, category spending, and money lent registers directly into Microsoft Excel or Google Sheets.",
+                        text = "Export your entire financial diary with executive KPI summaries, bank cash flows, category spending, loans, and borrowed money registers directly into Microsoft Excel or Google Sheets.",
                         color = Color(0xFF9CA3AF),
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     Button(
                         onClick = { viewModel.exportToExcel(context) },
@@ -511,7 +523,7 @@ fun SettingsScreen(
                         Icon(imageVector = Icons.Default.FileDownload, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Export to Excel (.xlsx / .csv)",
+                            text = "Export to Excel (.csv / .xlsx)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
@@ -584,7 +596,7 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Add your bank accounts to see inflows, outflows, and net cash flow per bank.",
-                                    color = Color(0xFF9CA3AF),
+                                    color = Color(0xFF94A3AF),
                                     fontSize = 12.sp,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
@@ -770,6 +782,28 @@ fun SettingsScreen(
     }
 
     // -------------------------------------------------------------
+    // Manual Account Dialog
+    // -------------------------------------------------------------
+    if (showManualAccountDialog) {
+        ManualAccountDialog(
+            onDismiss = { showManualAccountDialog = false },
+            onSave = { name, email ->
+                GoogleAuthDriveHelper.saveManualUser(context, name, email)
+                val profile = UserProfile(
+                    isSignedIn = true,
+                    displayName = name,
+                    email = email
+                )
+                viewModel.setUserProfile(profile)
+                showManualAccountDialog = false
+                viewModel.pullUserDataFromMongo(email) { _, msg ->
+                    statusFeedbackMessage = msg
+                }
+            }
+        )
+    }
+
+    // -------------------------------------------------------------
     // Add Bank Account Dialog
     // -------------------------------------------------------------
     if (showAddBankDialog) {
@@ -823,11 +857,91 @@ fun SettingsScreen(
     if (showHelpDialog) {
         HelpDialog(onDismiss = { showHelpDialog = false })
     }
+
+    // Status Feedback Alert
+    statusFeedbackMessage?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { statusFeedbackMessage = null },
+            containerColor = Color(0xFF1E293B),
+            title = { Text("Cloud & Backup Status", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text(msg, color = Color(0xFFCBD5E1), fontSize = 13.sp) },
+            confirmButton = {
+                Button(
+                    onClick = { statusFeedbackMessage = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                ) {
+                    Text("OK", color = Color.White)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun ManualAccountDialog(
+    onDismiss: () -> Unit,
+    onSave: (name: String, email: String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var errorMsg by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E293B),
+        title = { Text("Create / Sign In Account", color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Enter your Name and Email to partition your data on MongoDB Cloud and sync between devices.",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it; errorMsg = "" },
+                    label = { Text("Your Name *") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it; errorMsg = "" },
+                    label = { Text("Your Email *") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (errorMsg.isNotBlank()) {
+                    Text(errorMsg, color = Color(0xFFEF4444), fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isBlank() || email.isBlank() || !email.contains("@")) {
+                        errorMsg = "Please enter a valid Name and Email"
+                        return@Button
+                    }
+                    onSave(name.trim(), email.trim())
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+            ) {
+                Text("Activate Account", color = Color.White)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color(0xFF94A3B8))
+            }
+        }
+    )
 }
 
 @Composable
 fun BankCashFlowCard(
-    flow: com.moneytracker.app.ui.BankCashFlow,
+    flow: BankCashFlow,
     onDelete: () -> Unit
 ) {
     val bank = flow.bank
@@ -922,15 +1036,14 @@ fun AddBankDialog(
     onSave: (name: String, holder: String, last4: String, type: BankAccountType, balance: Double, color: String) -> Unit
 ) {
     var bankName by remember { mutableStateOf("") }
-    var accountHolder by remember { mutableStateOf("") }
+    val accountHolder by remember { mutableStateOf("") }
     var last4Digits by remember { mutableStateOf("") }
     var initialBalance by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf(BankAccountType.SAVINGS) }
-    var selectedColor by remember { mutableStateOf("#10B981") }
+    val selectedColor by remember { mutableStateOf("#10B981") }
     var errorMessage by remember { mutableStateOf("") }
 
     val presetBanks = listOf("HDFC Bank", "State Bank of India", "ICICI Bank", "Axis Bank", "Kotak Mahindra", "Punjab National Bank")
-    val colors = listOf("#10B981", "#3B82F6", "#8B5CF6", "#F59E0B", "#EC4899", "#06B6D4")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1079,16 +1192,16 @@ fun HelpDialog(onDismiss: () -> Unit) {
                         body = "Track money lent to colleagues or friends, split restaurant bills into parts with custom names, choose repayment methods (UPI, Cash, Bank Transfer), and record repayments."
                     )
                     HelpSectionItem(
-                        title = "MongoDB Atlas Sync",
-                        body = "Push all your transactions, credit cards, banks, and borrowed records directly into your personal MongoDB Atlas database cluster with one tap."
+                        title = "MongoDB Real-Time Sync",
+                        body = "Whatever data is added or modified is automatically pushed to your dedicated MongoDB Cloud account in the background without needing manual sync."
                     )
                     HelpSectionItem(
-                        title = "Google Drive Backup",
-                        body = "Creates a secure, timestamped JSON backup archive and saves it into your Google Drive account."
+                        title = "Google Drive Backup & Import",
+                        body = "Backup your data or import a backup JSON file whenever switching accounts or devices."
                     )
                     HelpSectionItem(
                         title = "Export to Excel & Sheets",
-                        body = "Generates a complete multi-sheet spreadsheet report formatted for Excel and Google Sheets, including KPI summaries, bank balances, and category analysis."
+                        body = "Generates a complete multi-sheet spreadsheet report formatted for Excel and Google Sheets, including KPI summaries, bank balances, category analysis, and active loan EMIs."
                     )
                     HelpSectionItem(
                         title = "1-Day Before Payment Alerts",

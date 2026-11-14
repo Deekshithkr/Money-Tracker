@@ -26,6 +26,7 @@ object ExcelExportHelper {
         borrowedItems: List<BorrowedItemEntity>
     ): File? {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        val dateOnlyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val fileDateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
         val timestamp = fileDateFormat.format(Date())
         val fileName = "MoneyTracker_Report_$timestamp.csv"
@@ -33,7 +34,7 @@ object ExcelExportHelper {
         val file = File(context.cacheDir, fileName)
         val sb = StringBuilder()
 
-        // Write UTF-8 Byte Order Mark (BOM) so Microsoft Excel opens Unicode (₹, accents) flawlessly
+        // Write UTF-8 Byte Order Mark (BOM) so Microsoft Excel opens Unicode flawlessly
         sb.append('\uFEFF')
 
         // -------------------------------------------------------------
@@ -56,6 +57,7 @@ object ExcelExportHelper {
             transactions.filter { it.creditCardId == card.id && it.type == TransactionType.EXPENSE }.sumOf { it.amount }
         }
         val totalMoneyLentPending = borrowedItems.filter { !it.isSettled }.sumOf { it.remainingAmount }
+        val totalMonthlyRecurring = recurringItems.filter { it.isActive }.sumOf { it.amount }
 
         sb.append("EXECUTIVE SUMMARY METRICS,VALUE (INR)\n")
         sb.append("Total Income Logged,").append("%.2f".format(totalIncome)).append("\n")
@@ -63,7 +65,8 @@ object ExcelExportHelper {
         sb.append("Net Cash Flow (Savings),").append("%.2f".format(netCashFlow)).append("\n")
         sb.append("Total Bank & Liquid Wealth,").append("%.2f".format(totalBankBalance)).append("\n")
         sb.append("Active Credit Card Spend,").append("%.2f".format(totalCardDebt)).append("\n")
-        sb.append("Money Lent (Pending Receivables),").append("%.2f".format(totalMoneyLentPending)).append("\n\n")
+        sb.append("Money Lent (Pending Receivables),").append("%.2f".format(totalMoneyLentPending)).append("\n")
+        sb.append("Active Monthly Recurring / EMIs,").append("%.2f".format(totalMonthlyRecurring)).append("\n\n")
 
         // -------------------------------------------------------------
         // SECTION 2: BANK ACCOUNTS & CASH FLOW ANALYSIS
@@ -74,7 +77,7 @@ object ExcelExportHelper {
         sb.append("Bank Name,Account Type,Last 4 Digits,Opening Balance,Total Inflow (+),Total Outflow (-),Net Flow,Current Balance\n")
 
         if (bankAccounts.isEmpty()) {
-            sb.append("No Bank Accounts configured,Default Wallet,-,0.00,")
+            sb.append("Default Wallet,Liquid Cash,-,0.00,")
                 .append("%.2f".format(totalIncome)).append(",")
                 .append("%.2f".format(totalExpense)).append(",")
                 .append("%.2f".format(netCashFlow)).append(",")
@@ -141,24 +144,57 @@ object ExcelExportHelper {
         sb.append("\n")
 
         // -------------------------------------------------------------
-        // SECTION 5: MONEY LENT & SPLITS
+        // SECTION 5: RECURRING BILLS, SUBSCRIPTIONS & LOAN EMIS
+        // -------------------------------------------------------------
+        sb.append("========================================================================\n")
+        sb.append("RECURRING BILLS, SUBSCRIPTIONS & ACTIVE LOANS REGISTER\n")
+        sb.append("========================================================================\n")
+        sb.append("Title,Type,Is Loan EMI,Amount (INR),Frequency,Due Day of Month,Next Due Date,Tenure (Paid/Total),Interest Rate,Status\n")
+
+        if (recurringItems.isEmpty()) {
+            sb.append("No Recurring Bills or Loans,-,-,0.00,-,-,-,-,-,-\n")
+        } else {
+            recurringItems.forEach { rec ->
+                val nextDue = dateOnlyFormat.format(Date(rec.nextDueDateMillis))
+                val tenureStr = if (rec.isLoan) "${rec.paidTenureMonths}/${rec.totalTenureMonths} Mos" else "-"
+                val interestStr = if (rec.isLoan) "${rec.interestRatePercent}%" else "-"
+                sb.append(escapeCsv(rec.title)).append(",")
+                    .append(escapeCsv(rec.recurringType.displayName)).append(",")
+                    .append(if (rec.isLoan) "YES" else "NO").append(",")
+                    .append("%.2f".format(rec.amount)).append(",")
+                    .append(escapeCsv(rec.frequency.displayName)).append(",")
+                    .append(rec.dueDayOfMonth).append(",")
+                    .append(nextDue).append(",")
+                    .append(tenureStr).append(",")
+                    .append(interestStr).append(",")
+                    .append(if (rec.isActive) "ACTIVE" else "PAUSED").append("\n")
+            }
+        }
+        sb.append("\n")
+
+        // -------------------------------------------------------------
+        // SECTION 6: MONEY LENT & SPLITS
         // -------------------------------------------------------------
         sb.append("========================================================================\n")
         sb.append("MONEY LENT, BORROWED & SPLITS REGISTER\n")
         sb.append("========================================================================\n")
         sb.append("Borrower Name,Total Lent (INR),Amount Received (INR),Pending Amount (INR),How To Receive,Expected Due Date,Split Count,Split Details,Status\n")
 
-        borrowedItems.forEach { item ->
-            val dueDateStr = dateFormat.format(Date(item.dueDateMillis))
-            sb.append(escapeCsv(item.personName)).append(",")
-                .append("%.2f".format(item.totalAmount)).append(",")
-                .append("%.2f".format(item.amountReceived)).append(",")
-                .append("%.2f".format(item.remainingAmount)).append(",")
-                .append(escapeCsv(item.receiveMethod)).append(",")
-                .append(dueDateStr).append(",")
-                .append(item.splitCount).append(",")
-                .append(escapeCsv(item.splitDetails)).append(",")
-                .append(if (item.isSettled) "SETTLED" else "PENDING").append("\n")
+        if (borrowedItems.isEmpty()) {
+            sb.append("No Lent Items Recorded,0.00,0.00,0.00,-,-,-,-,-\n")
+        } else {
+            borrowedItems.forEach { item ->
+                val dueDateStr = dateOnlyFormat.format(Date(item.dueDateMillis))
+                sb.append(escapeCsv(item.personName)).append(",")
+                    .append("%.2f".format(item.totalAmount)).append(",")
+                    .append("%.2f".format(item.amountReceived)).append(",")
+                    .append("%.2f".format(item.remainingAmount)).append(",")
+                    .append(escapeCsv(item.receiveMethod)).append(",")
+                    .append(dueDateStr).append(",")
+                    .append(item.splitCount).append(",")
+                    .append(escapeCsv(item.splitDetails)).append(",")
+                    .append(if (item.isSettled) "SETTLED" else "PENDING").append("\n")
+            }
         }
 
         return try {

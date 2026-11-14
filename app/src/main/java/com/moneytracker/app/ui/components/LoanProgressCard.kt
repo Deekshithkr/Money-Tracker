@@ -10,9 +10,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -27,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moneytracker.app.model.RecurringItemEntity
 import com.moneytracker.app.ui.theme.BorderDark
+import com.moneytracker.app.ui.theme.ExpenseRed
 import com.moneytracker.app.ui.theme.IncomeGreen
 import com.moneytracker.app.ui.theme.PrimaryNeon
 import com.moneytracker.app.ui.theme.SurfaceElevated
@@ -38,7 +45,9 @@ fun LoanProgressCard(
     loan: RecurringItemEntity,
     onPayEmiClick: (RecurringItemEntity) -> Unit,
     modifier: Modifier = Modifier,
-    currencySymbol: String = "₹"
+    currencySymbol: String = "₹",
+    onEditClick: ((RecurringItemEntity) -> Unit)? = null,
+    onDeleteClick: ((RecurringItemEntity) -> Unit)? = null
 ) {
     val formatter = remember { NumberFormat.getNumberInstance(Locale("en", "IN")) }
 
@@ -64,7 +73,11 @@ fun LoanProgressCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Box(
                     modifier = Modifier
                         .background(Color(0xFFEF4444).copy(alpha = 0.15f), RoundedCornerShape(10.dp))
@@ -80,24 +93,48 @@ fun LoanProgressCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Due on ${loan.dueDayOfMonth}th of each month",
+                        text = "Due on ${loan.dueDayOfMonth}th • Interest: ${loan.interestRatePercent}%",
                         color = Color(0xFF94A3B8),
                         fontSize = 12.sp
                     )
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFF3B82F6).copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = "${loan.paidTenureMonths}/${loan.totalTenureMonths} EMIs",
-                    color = Color(0xFF93C5FD),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF3B82F6).copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "${loan.paidTenureMonths}/${loan.totalTenureMonths} EMIs",
+                        color = Color(0xFF93C5FD),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                if (onEditClick != null) {
+                    IconButton(onClick = { onEditClick(loan) }, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+
+                if (onDeleteClick != null) {
+                    IconButton(onClick = { onDeleteClick(loan) }, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = ExpenseRed,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
             }
         }
 

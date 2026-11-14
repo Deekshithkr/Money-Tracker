@@ -1,5 +1,7 @@
 package com.moneytracker.app.ui
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -17,10 +19,11 @@ import com.moneytracker.app.model.TransactionEntity
 import com.moneytracker.app.model.TransactionType
 import com.moneytracker.app.sync.GoogleAuthDriveHelper
 import com.moneytracker.app.sync.MongoDbSyncHelper
-import com.moneytracker.app.sync.SyncResult
+import com.moneytracker.app.sync.UserDataSnapshot
 import com.moneytracker.app.sync.UserProfile
 import com.moneytracker.app.ui.components.MonthTrendData
 import com.moneytracker.app.util.ExcelExportHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +42,9 @@ data class BankCashFlow(
 )
 
 data class DashboardUiState(
+    val selectedBankId: Long? = null,
     val totalBalance: Double = 0.0,
+    val combinedBalance: Double = 0.0,
     val monthlyIncome: Double = 0.0,
     val monthlyExpense: Double = 0.0,
     val monthlyCreditCardSpend: Double = 0.0,
@@ -78,8 +83,8 @@ class MainViewModel(
     private val _currencySymbol = MutableStateFlow("₹")
     val currencySymbol: StateFlow<String> = _currencySymbol.asStateFlow()
 
-    private val _isDarkMode = MutableStateFlow(true)
-    val isDarkMode: StateFlow<String> = MutableStateFlow("dark")
+    private val _selectedBankFilterId = MutableStateFlow<Long?>(null)
+    val selectedBankFilterId: StateFlow<Long?> = _selectedBankFilterId.asStateFlow()
 
     // Filter time range: Default current month
     private val currentMonthRange = getMonthTimeRange(0)
@@ -108,13 +113,17 @@ class MainViewModel(
     private val _userProfile = MutableStateFlow(UserProfile())
     val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()
 
-    private val _syncStatus = MutableStateFlow<SyncResult?>(null)
-    val syncStatus: StateFlow<SyncResult?> = _syncStatus.asStateFlow()
-
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
-    // Combined Dashboard state with pure dynamic calculation
+    private fun currentEmail(): String =
+        _userProfile.value.email.ifBlank { "guest@moneytracker.app" }
+
+    fun selectBankFilter(bankId: Long?) {
+        _selectedBankFilterId.value = bankId
+    }
+
+    // Combined Dashboard state with pure dynamic calculation and bank separation/filter
     val dashboardState: StateFlow<DashboardUiState> = combine(
         combine(
             repository.recentTransactions,
@@ -132,8 +141,9 @@ class MainViewModel(
             ExtraData(loans, allTx, borrowed)
         },
         repository.getCategorySpending(currentMonthRange.first, currentMonthRange.second),
-        repository.getPaymentMethodBreakdown(currentMonthRange.first, currentMonthRange.second)
-    ) { core, extra, categories, paymentMethods ->
+        repository.getPaymentMethodBreakdown(currentMonthRange.first, currentMonthRange.second),
+        _selectedBankFilterId
+    ) { core, extra, categories, paymentMethods, selectedBankId ->
         val recents = core.recents
         val cards = core.cards
         val recurring = core.recurring
@@ -144,24 +154,20 @@ class MainViewModel(
 
         val (start, end) = currentMonthRange
 
-        // Real calculations from user transactions
-        val totalIncomeAll = allTx.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
-        val totalExpenseAll = allTx.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
-        val totalBalance = totalIncomeAll - totalExpenseAll
-
-        val monthlyExpense = categories.sumOf { it.totalAmount }
-        val monthlyIncome = allTx.filter { it.type == TransactionType.INCOME && it.dateMillis in start..end }.sumOf { it.amount }
-        val monthlyCCSpend = paymentMethods.find { it.paymentMethod == PaymentMethod.CREDIT_CARD }?.totalAmount ?: 0.0
-
-        // Estimated card spends from actual transactions
-        val cardSpends = mutableMapOf<Long, Double>()
-        cards.forEach { card ->
-            cardSpends[card.id] = allTx
-                .filter { it.creditCardId == card.id && it.type == TransactionType.EXPENSE }
-                .sumOf { it.amount }
+        // Combined calculations (All Banks / Overall)
+        val combinedIncomeAll = allTx.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
+        val combinedExpenseAll = allTx.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        val combinedBalance = if (banks.isNotEmpty()) {
+            banks.sumOf { bank ->
+                val inflow = allTx.filter { it.bankAccountId == bank.id && it.type == TransactionType.INCOME }.sumOf { it.amount }
+                val outflow = allTx.filter { it.bankAccountId == bank.id && it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+                bank.initialBalance + inflow - outflow
+            }
+        } else {
+            combinedIncomeAll - combinedExpenseAll
         }
 
-        // Bank Cash Flows
+        // Bank Cash Flows per bank
         val bankFlows = banks.map { bank ->
             val inflow = allTx.filter { it.bankAccountId == bank.id && it.type == TransactionType.INCOME }.sumOf { it.amount }
             val outflow = allTx.filter { it.bankAccountId == bank.id && it.type == TransactionType.EXPENSE }.sumOf { it.amount }
@@ -175,17 +181,41 @@ class MainViewModel(
             )
         }
 
-        // Real dynamic 4-month trend
-        val trends = calculateTrends(allTx)
+        // Filtered calculations if a bank is selected
+        val (displayBalance, monthlyIncome, monthlyExpense, displayRecents) = if (selectedBankId == null) {
+            val mIncome = allTx.filter { it.type == TransactionType.INCOME && it.dateMillis in start..end }.sumOf { it.amount }
+            val mExpense = allTx.filter { it.type == TransactionType.EXPENSE && it.dateMillis in start..end }.sumOf { it.amount }
+            Quad(combinedBalance, mIncome, mExpense, recents)
+        } else {
+            val selectedFlow = bankFlows.find { it.bank.id == selectedBankId }
+            val bankBal = selectedFlow?.currentBalance ?: 0.0
+            val mIncome = allTx.filter { it.bankAccountId == selectedBankId && it.type == TransactionType.INCOME && it.dateMillis in start..end }.sumOf { it.amount }
+            val mExpense = allTx.filter { it.bankAccountId == selectedBankId && it.type == TransactionType.EXPENSE && it.dateMillis in start..end }.sumOf { it.amount }
+            val bankRecents = recents.filter { it.bankAccountId == selectedBankId }
+            Quad(bankBal, mIncome, mExpense, bankRecents)
+        }
 
+        val monthlyCCSpend = paymentMethods.find { it.paymentMethod == PaymentMethod.CREDIT_CARD }?.totalAmount ?: 0.0
+
+        // Card spends
+        val cardSpends = mutableMapOf<Long, Double>()
+        cards.forEach { card ->
+            cardSpends[card.id] = allTx
+                .filter { it.creditCardId == card.id && it.type == TransactionType.EXPENSE }
+                .sumOf { it.amount }
+        }
+
+        val trends = calculateTrends(allTx)
         val totalPending = borrowedItems.filter { !it.isSettled }.sumOf { it.remainingAmount }
 
         DashboardUiState(
-            totalBalance = totalBalance,
+            selectedBankId = selectedBankId,
+            totalBalance = displayBalance,
+            combinedBalance = combinedBalance,
             monthlyIncome = monthlyIncome,
             monthlyExpense = monthlyExpense,
             monthlyCreditCardSpend = monthlyCCSpend,
-            recentTransactions = recents,
+            recentTransactions = displayRecents,
             creditCards = cards,
             bankAccounts = banks,
             bankCashFlows = bankFlows,
@@ -218,20 +248,49 @@ class MainViewModel(
         dateMillis: Long = System.currentTimeMillis()
     ) {
         viewModelScope.launch {
-            repository.addTransaction(
-                TransactionEntity(
-                    title = title,
-                    amount = amount,
-                    type = type,
-                    category = category,
-                    paymentMethod = paymentMethod,
-                    creditCardId = creditCardId,
-                    bankAccountId = bankAccountId,
-                    bankName = bankName,
-                    dateMillis = dateMillis,
-                    note = note
-                )
+            val entity = TransactionEntity(
+                title = title,
+                amount = amount,
+                type = type,
+                category = category,
+                paymentMethod = paymentMethod,
+                creditCardId = creditCardId,
+                bankAccountId = bankAccountId,
+                bankName = bankName,
+                dateMillis = dateMillis,
+                note = note
             )
+            val newId = repository.addTransaction(entity)
+            val savedEntity = entity.copy(id = newId)
+
+            // Auto-sync to MongoDB in background
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncTransaction(currentEmail(), savedEntity)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun updateTransaction(transaction: TransactionEntity) {
+        viewModelScope.launch {
+            repository.updateTransaction(transaction)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncTransaction(currentEmail(), transaction)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun deleteTransaction(transaction: TransactionEntity) {
+        viewModelScope.launch {
+            repository.deleteTransaction(transaction)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoDeleteTransaction(currentEmail(), transaction.id)
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -244,60 +303,176 @@ class MainViewModel(
         colorHex: String = "#10B981"
     ) {
         viewModelScope.launch {
-            repository.addBankAccount(
-                BankAccountEntity(
-                    bankName = bankName,
-                    accountHolder = accountHolder,
-                    accountNumberLast4 = accountNumberLast4,
-                    accountType = accountType,
-                    initialBalance = initialBalance,
-                    colorHex = colorHex
-                )
+            val bank = BankAccountEntity(
+                bankName = bankName,
+                accountHolder = accountHolder,
+                accountNumberLast4 = accountNumberLast4,
+                accountType = accountType,
+                initialBalance = initialBalance,
+                colorHex = colorHex
             )
+            val id = repository.addBankAccount(bank)
+            val savedBank = bank.copy(id = id)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncBankAccount(currentEmail(), savedBank)
+                } catch (_: Exception) {}
+            }
         }
     }
 
     fun deleteBankAccount(bank: BankAccountEntity) {
         viewModelScope.launch {
             repository.deleteBankAccount(bank)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoDeleteBankAccount(currentEmail(), bank.id)
+                } catch (_: Exception) {}
+            }
         }
     }
 
-    fun testMongoConnection(onResult: (SyncResult) -> Unit = {}) {
+    fun addCreditCard(card: CreditCardEntity) {
         viewModelScope.launch {
-            _isSyncing.value = true
-            val result = MongoDbSyncHelper.testConnection()
-            _syncStatus.value = result
-            _isSyncing.value = false
-            onResult(result)
+            val id = repository.addCreditCard(card)
+            val savedCard = card.copy(id = id)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncCreditCard(currentEmail(), savedCard)
+                } catch (_: Exception) {}
+            }
         }
     }
 
-    fun pushToMongoDb(onResult: (SyncResult) -> Unit = {}) {
+    fun addRecurringItem(item: RecurringItemEntity) {
         viewModelScope.launch {
-            _isSyncing.value = true
-            val txs = allTransactions.value
-            val banks = allBankAccounts.value
-            val cards = allCreditCards.value
-            val recs = activeRecurringItems.value
-            val borrowed = allBorrowedItems.value
-            val email = _userProfile.value.email.ifBlank { "guest@moneytracker.app" }
+            val id = repository.addRecurringItem(item)
+            val saved = item.copy(id = id)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncRecurringItem(currentEmail(), saved)
+                } catch (_: Exception) {}
+            }
+        }
+    }
 
-            val result = MongoDbSyncHelper.pushAllData(
-                userEmail = email,
-                transactions = txs,
-                bankAccounts = banks,
-                creditCards = cards,
-                recurringItems = recs,
-                borrowedItems = borrowed
+    fun updateRecurringItem(item: RecurringItemEntity) {
+        viewModelScope.launch {
+            repository.updateRecurringItem(item)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncRecurringItem(currentEmail(), item)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun deleteRecurringItem(item: RecurringItemEntity) {
+        viewModelScope.launch {
+            repository.deleteRecurringItem(item)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoDeleteRecurringItem(currentEmail(), item.id)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun addBorrowedItem(
+        personName: String,
+        totalAmount: Double,
+        receiveMethod: String = "UPI",
+        dueDateMillis: Long = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
+        isSplit: Boolean = false,
+        splitCount: Int = 1,
+        splitDetails: String = "",
+        notes: String = ""
+    ) {
+        viewModelScope.launch {
+            val item = BorrowedItemEntity(
+                personName = personName,
+                totalAmount = totalAmount,
+                receiveMethod = receiveMethod,
+                dueDateMillis = dueDateMillis,
+                isSplit = isSplit,
+                splitCount = splitCount,
+                splitDetails = splitDetails,
+                notes = notes
             )
-            _syncStatus.value = result
-            _isSyncing.value = false
-            onResult(result)
+            val id = repository.addBorrowedItem(item)
+            val saved = item.copy(id = id)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncBorrowedItem(currentEmail(), saved)
+                } catch (_: Exception) {}
+            }
         }
     }
 
-    fun backupToGoogleDrive(context: android.content.Context) {
+    fun updateBorrowedItem(item: BorrowedItemEntity) {
+        viewModelScope.launch {
+            repository.updateBorrowedItem(item)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoSyncBorrowedItem(currentEmail(), item)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun recordBorrowedRepayment(
+        item: BorrowedItemEntity,
+        amountReceived: Double,
+        paymentMethod: PaymentMethod = PaymentMethod.UPI
+    ) {
+        viewModelScope.launch {
+            repository.recordBorrowedRepayment(item, amountReceived, paymentMethod)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val updated = item.copy(
+                        amountReceived = item.amountReceived + amountReceived,
+                        isSettled = (item.amountReceived + amountReceived) >= item.totalAmount
+                    )
+                    MongoDbSyncHelper.autoSyncBorrowedItem(currentEmail(), updated)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun deleteBorrowedItem(item: BorrowedItemEntity) {
+        viewModelScope.launch {
+            repository.deleteBorrowedItem(item)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    MongoDbSyncHelper.autoDeleteBorrowedItem(currentEmail(), item.id)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun recordLoanPayment(loan: RecurringItemEntity) {
+        viewModelScope.launch {
+            repository.recordLoanPayment(loan)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val updatedPaid = loan.paidTenureMonths + 1
+                    val updated = loan.copy(
+                        paidTenureMonths = updatedPaid,
+                        isActive = updatedPaid < loan.totalTenureMonths
+                    )
+                    MongoDbSyncHelper.autoSyncRecurringItem(currentEmail(), updated)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun settleCreditCard(card: CreditCardEntity, amount: Double) {
+        viewModelScope.launch {
+            repository.settleCreditCardBill(card, amount)
+        }
+    }
+
+    fun backupToGoogleDrive(context: Context) {
         val txs = allTransactions.value
         val banks = allBankAccounts.value
         val cards = allCreditCards.value
@@ -317,7 +492,7 @@ class MainViewModel(
         }
     }
 
-    fun exportToExcel(context: android.content.Context) {
+    fun exportToExcel(context: Context) {
         val txs = allTransactions.value
         val banks = allBankAccounts.value
         val cards = allCreditCards.value
@@ -337,81 +512,66 @@ class MainViewModel(
         }
     }
 
-    fun deleteTransaction(transaction: TransactionEntity) {
+    fun restoreUserData(snapshot: UserDataSnapshot, onComplete: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            repository.deleteTransaction(transaction)
-        }
-    }
-
-    fun addBorrowedItem(
-        personName: String,
-        totalAmount: Double,
-        receiveMethod: String = "UPI",
-        dueDateMillis: Long = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
-        isSplit: Boolean = false,
-        splitCount: Int = 1,
-        splitDetails: String = "",
-        notes: String = ""
-    ) {
-        viewModelScope.launch {
-            repository.addBorrowedItem(
-                BorrowedItemEntity(
-                    personName = personName,
-                    totalAmount = totalAmount,
-                    receiveMethod = receiveMethod,
-                    dueDateMillis = dueDateMillis,
-                    isSplit = isSplit,
-                    splitCount = splitCount,
-                    splitDetails = splitDetails,
-                    notes = notes
+            try {
+                repository.clearAllData()
+                repository.restoreAllData(
+                    transactions = snapshot.transactions,
+                    bankAccounts = snapshot.bankAccounts,
+                    creditCards = snapshot.creditCards,
+                    recurringItems = snapshot.recurringItems,
+                    borrowedItems = snapshot.borrowedItems
                 )
-            )
+                onComplete(true)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onComplete(false)
+            }
         }
     }
 
-    fun recordBorrowedRepayment(
-        item: BorrowedItemEntity,
-        amountReceived: Double,
-        paymentMethod: PaymentMethod = PaymentMethod.UPI
-    ) {
+    fun pullUserDataFromMongo(email: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
-            repository.recordBorrowedRepayment(item, amountReceived, paymentMethod)
+            _isSyncing.value = true
+            val snapshot = MongoDbSyncHelper.pullUserData(email)
+            _isSyncing.value = false
+            if (snapshot != null) {
+                val totalItems = snapshot.transactions.size + snapshot.bankAccounts.size +
+                        snapshot.creditCards.size + snapshot.recurringItems.size + snapshot.borrowedItems.size
+                if (totalItems > 0) {
+                    restoreUserData(snapshot) { success ->
+                        if (success) {
+                            onResult(true, "Restored $totalItems items from your MongoDB Cloud account.")
+                        } else {
+                            onResult(false, "Failed to write restored items to local database.")
+                        }
+                    }
+                } else {
+                    onResult(false, "No cloud data found for $email.")
+                }
+            } else {
+                onResult(false, "Could not connect to MongoDB or fetch user cloud data.")
+            }
         }
     }
 
-    fun deleteBorrowedItem(item: BorrowedItemEntity) {
+    fun restoreFromDriveBackup(context: Context, uri: Uri, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
-            repository.deleteBorrowedItem(item)
-        }
-    }
-
-    fun recordLoanPayment(loan: RecurringItemEntity) {
-        viewModelScope.launch {
-            repository.recordLoanPayment(loan)
-        }
-    }
-
-    fun settleCreditCard(card: CreditCardEntity, amount: Double) {
-        viewModelScope.launch {
-            repository.settleCreditCardBill(card, amount)
-        }
-    }
-
-    fun addCreditCard(card: CreditCardEntity) {
-        viewModelScope.launch {
-            repository.addCreditCard(card)
-        }
-    }
-
-    fun addRecurringItem(item: RecurringItemEntity) {
-        viewModelScope.launch {
-            repository.addRecurringItem(item)
-        }
-    }
-
-    fun deleteRecurringItem(item: RecurringItemEntity) {
-        viewModelScope.launch {
-            repository.deleteRecurringItem(item)
+            val snapshot = GoogleAuthDriveHelper.restoreBackupFromUri(context, uri)
+            if (snapshot != null) {
+                val totalItems = snapshot.transactions.size + snapshot.bankAccounts.size +
+                        snapshot.creditCards.size + snapshot.recurringItems.size + snapshot.borrowedItems.size
+                restoreUserData(snapshot) { success ->
+                    if (success) {
+                        onResult(true, "Restored $totalItems items from Google Drive backup file.")
+                    } else {
+                        onResult(false, "Failed to import items into database.")
+                    }
+                }
+            } else {
+                onResult(false, "Invalid or corrupted backup JSON file.")
+            }
         }
     }
 
@@ -464,6 +624,8 @@ class MainViewModel(
 
         return Pair(start, end)
     }
+
+    private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
     class Factory(private val repository: MoneyTrackerRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
